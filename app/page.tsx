@@ -2292,7 +2292,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""} ${!room && chatOpen && chatChannel === "world" ? "mobile-world-page-open" : ""}`}>
+    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""} ${!room && chatOpen && chatChannel === "world" ? "mobile-world-page-open" : ""} ${!room && friendPanelOpen ? "mobile-friends-page-open" : ""}`}>
       <header className="glass topbar">
         <div className="brand">
           <span className="brand-icon"><Image src="/micosm-logo.webp" alt="" width={34} height={34} priority unoptimized /></span>

@@ -210,6 +210,7 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /mobile-game-home/);
   assert.match(page, /mobile-page-open/);
   assert.match(page, /mobile-world-page-open/);
+  assert.match(page, /mobile-friends-page-open/);
   assert.match(page, /MobileWorldChannel/);
   assert.match(page, /手机世界频道/);
   assert.match(page, /mobile-world-message-list/);
@@ -227,6 +228,7 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /\.mobile-page-open > \.mobile-world-channel/);
   assert.match(styles, /\.mobile-world-composer/);
   assert.match(styles, /\.mobile-world-view-tabs/);
+  assert.match(styles, /\.mobile-page-open > \.friend-panel > header::after \{ display: none; \}/);
   assert.match(styles, /height: 100dvh; min-height: 0; flex-direction: column; overflow: hidden/);
   assert.match(styles, /overscroll-behavior: contain/);
   assert.match(styles, /\.mobile-home-hero/);
