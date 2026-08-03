@@ -55,3 +55,16 @@ test("Go AI returns a legal move on every supported board size", () => {
     assert.equal(next.board.flat().filter(Boolean).length, 1);
   }
 });
+
+test("Go AI passes when no legal point remains", () => {
+  const state = activateMatch(createMatchState("go", 9));
+  state.board = state.board.map((row) => row.map(() => "black"));
+  state.turn = "white";
+
+  const action = chooseBuiltInAiAction(state, "normal", fixedRandom);
+  assert.deepEqual(action, { type: "pass" });
+
+  const next = applyMatchAction(state, "white", action);
+  assert.equal(next.passes, 1);
+  assert.equal(next.turn, "black");
+});

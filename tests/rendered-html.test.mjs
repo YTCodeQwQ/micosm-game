@@ -101,6 +101,8 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /pendingMove/);
   assert.match(page, /mobile-direction-pad/);
   assert.match(page, /确认落子/);
+  assert.match(page, /结束并数子/);
+  assert.match(page, /确认结果/);
   assert.match(page, /onDoubleClick/);
   assert.match(page, /is-opponent/);
   assert.match(page, /match-session-active/);
@@ -201,6 +203,7 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /\.move-confirm-bar/);
   assert.match(styles, /\.mobile-direction-pad/);
   assert.match(styles, /\.selected-point/);
+  assert.match(styles, /\.go-end-action/);
   assert.match(styles, /calc\(100dvh - 280px\)/);
   assert.match(page, /移动落点/);
   assert.match(styles, /\.footer-actions\.is-open/);

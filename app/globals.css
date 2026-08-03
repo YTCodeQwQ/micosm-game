@@ -390,6 +390,9 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .move-selection-copy strong, .move-selection-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .move-selection-copy strong { color: #304c61; font-size: 12px; }
 .move-selection-copy small { margin-top: 3px; color: #788c9d; font-size: 10px; }
+.go-end-action { display: flex; min-width: 110px; min-height: 34px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid rgba(44,116,126,.16); border-radius: 10px; background: #e1f1f2; color: #286e77; font-size: 10px; font-weight: 780; cursor: pointer; }
+.go-end-action.confirm-score { border-color: transparent; background: #2f7881; color: #fff; }
+.go-end-action:disabled { cursor: default; opacity: .5; }
 .move-confirm-bar.is-waiting .move-selection-copy { color: #8a9ba8; }
 .mobile-direction-control, .mobile-direction-pad { display: none; }
 .confirm-move-button { display: flex; min-width: 142px; min-height: 44px; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 12px; background: #296e7d; color: #fff; box-shadow: 0 8px 20px rgba(42,103,118,.2); font-size: 12px; font-weight: 780; cursor: pointer; }
@@ -1618,6 +1621,10 @@ body[data-theme="dark"] {
   .move-selection-copy > svg { width: 16px; }
   .move-selection-copy strong { font-size: 11px; }
   .move-selection-copy small { font-size: 8px; }
+  .move-selection-copy.has-go-action { gap: 5px; }
+  .move-selection-copy.has-go-action > svg { display: none; }
+  .move-selection-copy.has-go-action small { display: none; }
+  .move-selection-copy.has-go-action .go-end-action { min-width: 92px; min-height: 34px; padding: 0 7px; font-size: 9px; }
   .mobile-direction-control {
     display: flex;
     min-width: 0;

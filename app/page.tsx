@@ -659,6 +659,7 @@ export default function HomePage() {
   const scannerCaptureRef = useRef<HTMLInputElement | null>(null);
   const scannerControls = useRef<{ stop: () => void } | null>(null);
   const aiRequest = useRef("");
+  const announcedAiPass = useRef("");
   const seenGameInvites = useRef(new Set<string>());
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const [favorites, setFavorites] = useState<GameId[]>(["go", "gomoku"]);
@@ -1169,6 +1170,15 @@ export default function HomePage() {
     }, ai.engine === "builtin" ? 520 : 220);
     return () => window.clearTimeout(timer);
   }, [aiRetryNonce, playerId, review, room]);
+
+  useEffect(() => {
+    if (room?.mode !== "ai" || room.state.game !== "go" || room.state.status !== "playing" || room.state.passes !== 1 || room.state.turn !== room.role) return;
+    const key = `${room.id}:${room.version}`;
+    if (announcedAiPass.current === key) return;
+    announcedAiPass.current = key;
+    const timer = window.setTimeout(() => showToast("电脑已停一手。你可以继续落子，或点击“结束并数子”判定胜负。", "info"), 0);
+    return () => window.clearTimeout(timer);
+  }, [room]);
 
   useEffect(() => {
     if (room?.state.status !== "playing" || !room.state.clock) return;
@@ -2174,6 +2184,8 @@ export default function HomePage() {
       ? reviewFrame.moveNumber === 0 ? "复盘 · 开局" : `复盘 · 第 ${reviewFrame.moveNumber} 手`
     : connectionState === "reconnecting"
       ? "正在重新连接"
+      : room?.mode === "ai" && remoteState.game === "go" && remoteState.status === "playing" && remoteState.passes === 1 && remoteState.turn === room.role
+        ? "电脑已停一手"
       : room?.mode === "ai" && aiError
         ? "电脑计算失败"
       : room?.mode === "ai" && aiThinking
@@ -2233,6 +2245,8 @@ export default function HomePage() {
   const canChooseMove = Boolean(!review && room?.role && (
     isMyTurn || (remoteState?.game === "go" && remoteState.status === "scoring")
   ));
+  const canFinishGoAgainstAi = Boolean(room?.mode === "ai" && room.role && remoteState?.game === "go" && remoteState.status === "playing" && remoteState.passes === 1 && remoteState.turn === room.role);
+  const canConfirmAiGoScore = Boolean(room?.mode === "ai" && room.role && remoteState?.game === "go" && remoteState.status === "scoring" && !remoteState.goScoring?.confirmations.includes(room.role));
   const showMoveControls = Boolean(room?.role && !review && remoteState && remoteState.status !== "ended");
   const pendingGameInvite = friendsData.gameInvites[0] ?? null;
   const friendBadge = friendsData.incomingRequests.length + friendsData.gameInvites.length;
@@ -2586,9 +2600,11 @@ export default function HomePage() {
 
           {showMoveControls && (
             <div className={`move-confirm-bar ${canChooseMove ? "is-actionable" : "is-waiting"}`}>
-              <div className="move-selection-copy">
+              <div className={`move-selection-copy ${canFinishGoAgainstAi || canConfirmAiGoScore ? "has-go-action" : ""}`}>
                 <CircleDot size={18} />
-                <span><strong>{pendingMove ? `第 ${pendingMove[0] + 1} 行 · 第 ${pendingMove[1] + 1} 列` : "选择落点"}</strong><small>{canChooseMove ? pendingMove ? isPendingMoveLegal(pendingMove) ? "位置可落子，确认后提交" : "当前位置不可落子" : "单击选择，双击可直接落子" : "等待对手落子后再确认"}</small></span>
+                <span><strong>{remoteState?.status === "scoring" ? "终局数子" : pendingMove ? `第 ${pendingMove[0] + 1} 行 · 第 ${pendingMove[1] + 1} 列` : canFinishGoAgainstAi ? "电脑已停一手" : "选择落点"}</strong><small>{remoteState?.status === "scoring" ? "可点选棋子标记死子，确认后自动判定胜负" : canFinishGoAgainstAi ? "继续落子，或结束对局进入数子" : canChooseMove ? pendingMove ? isPendingMoveLegal(pendingMove) ? "位置可落子，确认后提交" : "当前位置不可落子" : "单击选择，双击可直接落子" : "等待对手落子后再确认"}</small></span>
+                {canFinishGoAgainstAi && <button className="go-end-action" disabled={actionBusy} onClick={() => void submitMatchAction({ type: "pass" })} type="button"><Flag size={14} />结束并数子</button>}
+                {canConfirmAiGoScore && <button className="go-end-action confirm-score" disabled={actionBusy} onClick={() => void submitMatchAction({ type: "confirmScore" })} type="button"><Check size={14} />确认结果</button>}
               </div>
               <div className="mobile-direction-control">
                 <small>移动落点</small>
