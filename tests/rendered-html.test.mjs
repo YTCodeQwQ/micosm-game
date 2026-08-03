@@ -229,6 +229,8 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /\.mobile-world-composer/);
   assert.match(styles, /\.mobile-world-view-tabs/);
   assert.match(styles, /\.mobile-page-open > \.friend-panel > header::after \{ display: none; \}/);
+  assert.match(styles, /\.mobile-friends-page-open \.friend-search \{ min-height: 38px/);
+  assert.match(styles, /\.mobile-friends-page-open \.friend-tabs button \{ min-height: 32px/);
   assert.match(styles, /height: 100dvh; min-height: 0; flex-direction: column; overflow: hidden/);
   assert.match(styles, /overscroll-behavior: contain/);
   assert.match(styles, /\.mobile-home-hero/);

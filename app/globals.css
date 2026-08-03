@@ -1602,14 +1602,23 @@ body[data-theme="dark"] {
   .mobile-page-open > .chat-panel > header small, .mobile-page-open > .friend-panel > header small { color: #4b8991; font-size: 8px; }
   .mobile-page-open > .chat-panel > header h2, .mobile-page-open > .friend-panel > header h2 { margin-top: 4px; color: #29475b; font-size: 23px; }
   .mobile-page-open > .chat-panel > header > button, .mobile-page-open > .friend-panel > header > button { display: none; }
-  .mobile-friends-page-open > .topbar { min-height: 48px; padding-top: 5px; padding-bottom: 5px; }
-  .mobile-friends-page-open > .topbar .brand-icon { width: 34px; height: 34px; border-radius: 10px; }
-  .mobile-friends-page-open > .topbar .brand-icon img { width: 26px; height: 26px; }
-  .mobile-page-open > .friend-panel > header { min-height: 38px; margin: 0; padding: 0 2px 7px; border: 0; border-radius: 0; background: transparent; }
+  .mobile-friends-page-open > .topbar { min-height: 42px; padding: 3px 6px; border-radius: 13px; }
+  .mobile-friends-page-open > .topbar .brand { gap: 7px; }
+  .mobile-friends-page-open > .topbar .brand-icon { width: 30px; height: 30px; border-radius: 9px; }
+  .mobile-friends-page-open > .topbar .brand-icon img { width: 23px; height: 23px; }
+  .mobile-friends-page-open > .topbar .brand strong { font-size: 11px; }
+  .mobile-friends-page-open > .friend-panel { margin-top: 3px; padding-top: 8px; }
+  .mobile-page-open > .friend-panel > header { min-height: 30px; margin: 0; padding: 0 2px 4px; border: 0; border-radius: 0; background: transparent; }
   .mobile-page-open > .friend-panel > header::after { display: none; }
   .mobile-page-open > .friend-panel > header > div { display: flex; align-items: baseline; gap: 8px; }
   .mobile-page-open > .friend-panel > header small { font-size: 8px; }
-  .mobile-page-open > .friend-panel > header h2 { margin: 0; font-size: 19px; }
+  .mobile-page-open > .friend-panel > header h2 { margin: 0; font-size: 17px; }
+  .mobile-friends-page-open .friend-search { min-height: 38px; grid-template-columns: 17px minmax(0,1fr) 30px; padding: 3px 4px 3px 10px; border-radius: 11px; }
+  .mobile-friends-page-open .friend-search input { height: 30px; font-size: 11px; }
+  .mobile-friends-page-open .friend-search button { width: 30px; height: 30px; border-radius: 8px; }
+  .mobile-friends-page-open .friend-tabs { margin-top: 6px; padding: 2px; border-radius: 11px; }
+  .mobile-friends-page-open .friend-tabs button { min-height: 32px; border-radius: 8px; font-size: 10px; }
+  .mobile-friends-page-open .friend-panel-body { margin-top: 5px; }
   .chat-panel.world-lobby-panel { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto auto auto 178px minmax(150px,1fr) auto; column-gap: 0; }
   .world-lobby-panel > header, .world-lobby-panel > .chat-tabs, .world-lobby-panel > .world-hall-tabs { grid-column: 1; }
   .world-lobby-panel > .world-channel-note { grid-column: 1; grid-row: 4; }
