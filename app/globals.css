@@ -1596,6 +1596,7 @@ body[data-theme="dark"] {
   .mobile-page-open { display: flex; height: 100dvh; min-height: 0; flex-direction: column; overflow: hidden; background: #eef4f8; }
   .mobile-page-open .app-primary-content { display: none; }
   .mobile-page-open > .topbar { position: relative; top: 0; flex: 0 0 auto; box-shadow: none; }
+  .mobile-world-page-open > .topbar { display: none; }
   .mobile-page-open > .chat-panel, .mobile-page-open > .friend-panel { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; width: calc(100% + 14px); height: auto; min-height: 0; max-height: none; flex: 1 1 auto; margin: 8px -7px 0; padding: 15px 12px 10px; overflow: hidden; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background-color: #f4f8fb; background-image: none; box-shadow: none; backdrop-filter: none; }
   .mobile-page-open > .chat-panel > header, .mobile-page-open > .friend-panel > header { min-height: 57px; align-items: center; padding: 1px 2px 12px; }
   .mobile-page-open > .chat-panel > header small, .mobile-page-open > .friend-panel > header small { color: #4b8991; font-size: 8px; }
@@ -1652,19 +1653,19 @@ body[data-theme="dark"] {
     min-height: 0;
     flex: 1 1 auto;
     grid-template-rows: auto auto auto minmax(0,1fr) auto;
-    margin: 8px -7px 0;
-    padding: 13px 12px 8px;
+    margin: -7px -7px 0;
+    padding: max(14px,env(safe-area-inset-top)) 12px 8px;
     overflow: hidden;
     border-top: 1px solid rgba(74,106,129,.1);
     background: #f4f8fb;
     color: #304d60;
   }
-  .mobile-world-header { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px 9px; }
+  .mobile-world-header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px 8px; }
   .mobile-world-header small { display: block; color: #4b8991; font-size: 8px; font-weight: 850; }
-  .mobile-world-header h1 { margin: 3px 0 0; color: #29475b; font-size: 22px; line-height: 1.1; }
-  .mobile-world-header p { display: flex; align-items: center; gap: 5px; margin: 5px 0 0; color: #8295a2; font-size: 9px; }
+  .mobile-world-header h1 { display: inline; margin: 0 8px 0 0; color: #29475b; font-size: 20px; line-height: 1.1; }
+  .mobile-world-header p { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: #8295a2; font-size: 9px; vertical-align: 2px; }
   .mobile-world-header p i { width: 6px; height: 6px; border-radius: 50%; background: #49a77e; box-shadow: 0 0 0 3px rgba(73,167,126,.12); }
-  .mobile-world-header > button { position: relative; display: flex; min-width: 64px; height: 42px; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(73,105,129,.11); border-radius: 13px; background: #fff; color: #56778b; font-size: 10px; font-weight: 760; box-shadow: 0 5px 14px rgba(39,68,90,.06); }
+  .mobile-world-header > button { position: relative; display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(73,105,129,.11); border-radius: 13px; background: #fff; color: #56778b; box-shadow: 0 5px 14px rgba(39,68,90,.06); }
   .mobile-world-header > button b { position: absolute; top: -5px; right: -4px; display: grid; min-width: 18px; height: 18px; padding: 0 4px; place-items: center; border: 2px solid #f4f8fb; border-radius: 9px; background: #dd665e; color: #fff; font-size: 8px; }
 
   .mobile-world-halls { display: grid; min-height: 43px; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 3px; padding: 3px; border-radius: 13px; background: #e7eef3; }
@@ -1674,14 +1675,22 @@ body[data-theme="dark"] {
   .mobile-world-halls button.active { background: #fff; color: #267681; box-shadow: 0 3px 10px rgba(44,75,96,.1); }
   .mobile-world-halls button.active i { background: #dff0f0; }
 
-  .mobile-live-rooms { min-width: 0; padding: 10px 0 9px; border-bottom: 1px solid rgba(71,104,127,.1); }
+  .mobile-world-view-tabs { display: grid; min-height: 43px; grid-template-columns: 1fr 1fr; gap: 18px; padding: 6px 4px 0; border-bottom: 1px solid rgba(71,104,127,.1); }
+  .mobile-world-view-tabs button { position: relative; display: flex; min-width: 0; align-items: center; justify-content: center; gap: 6px; border: 0; background: transparent; color: #8597a2; font-size: 10px; font-weight: 760; }
+  .mobile-world-view-tabs button::after { content: ""; position: absolute; right: 18%; bottom: -1px; left: 18%; height: 3px; border-radius: 2px 2px 0 0; background: transparent; }
+  .mobile-world-view-tabs button.active { color: #287781; }
+  .mobile-world-view-tabs button.active::after { background: #3a9296; }
+  .mobile-world-view-tabs button i { display: grid; min-width: 17px; height: 17px; padding: 0 4px; place-items: center; border-radius: 9px; background: #e5edf2; font-size: 8px; font-style: normal; }
+
+  .mobile-live-rooms { min-width: 0; min-height: 0; padding: 9px 0 0; overflow: hidden; }
+  .mobile-live-rooms.is-page { display: flex; flex-direction: column; }
   .mobile-live-rooms > header { display: flex; height: 22px; align-items: center; justify-content: space-between; padding: 0 2px 6px; }
   .mobile-live-rooms > header > div { display: flex; align-items: center; gap: 6px; color: #3f687d; }
   .mobile-live-rooms > header strong { font-size: 10px; }
   .mobile-live-rooms > header span { color: #94a2ac; font-size: 8px; }
-  .mobile-room-rail { display: flex; min-width: 0; gap: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: none; }
+  .mobile-room-rail { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
   .mobile-room-rail::-webkit-scrollbar { display: none; }
-  .mobile-room-ticket { display: grid; min-width: min(260px,82vw); height: 98px; flex: 0 0 auto; grid-template-rows: auto 1fr auto; padding: 8px 9px; scroll-snap-align: start; border: 1px solid rgba(70,104,128,.11); border-radius: 13px; background: #fff; box-shadow: 0 5px 14px rgba(43,70,91,.055); }
+  .mobile-room-ticket { display: grid; width: 100%; min-width: 0; height: 104px; flex: 0 0 auto; grid-template-rows: auto 1fr auto; padding: 9px 11px; border: 1px solid rgba(70,104,128,.11); border-radius: 13px; background: #fff; box-shadow: 0 5px 14px rgba(43,70,91,.055); }
   .mobile-room-ticket-top { display: flex; align-items: center; justify-content: space-between; }
   .mobile-room-ticket-top span { color: #375c72; font-size: 10px; font-weight: 800; }
   .mobile-room-ticket-top i { color: #8998a3; font-size: 8px; font-style: normal; }
@@ -1694,7 +1703,7 @@ body[data-theme="dark"] {
   .mobile-room-ticket footer > span { display: flex; align-items: center; gap: 4px; }
   .mobile-room-ticket footer button { display: flex; min-height: 26px; align-items: center; gap: 2px; margin-left: auto; padding: 0 9px; border: 0; border-radius: 8px; background: #347b85; color: #fff; font-size: 8px; font-weight: 770; }
   .mobile-room-ticket footer button:disabled { background: #b8c2c8; }
-  .mobile-room-empty { display: flex; width: 100%; height: 72px; align-items: center; gap: 10px; padding: 10px 12px; border: 1px dashed rgba(71,105,128,.18); border-radius: 13px; background: rgba(255,255,255,.55); color: #77909e; }
+  .mobile-room-empty { display: flex; width: 100%; min-height: 150px; align-items: center; justify-content: center; gap: 10px; padding: 14px; border: 1px dashed rgba(71,105,128,.18); border-radius: 13px; background: rgba(255,255,255,.55); color: #77909e; }
   .mobile-room-empty > span { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: #e5f0f2; color: #4a8b91; }
   .mobile-room-empty strong, .mobile-room-empty small { display: block; }
   .mobile-room-empty strong { color: #536f80; font-size: 10px; }
@@ -1715,6 +1724,7 @@ body[data-theme="dark"] {
   .mobile-world-message > div > header { display: flex; align-items: center; gap: 7px; margin: 0 2px 4px; }
   .mobile-world-message > div > header strong { overflow: hidden; color: #607686; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-world-message > div > header time { color: #a4afb6; font-size: 7px; }
+  .mobile-world-message > div > header button { display: grid; width: 20px; height: 20px; margin-left: -2px; place-items: center; border: 0; background: transparent; color: #a3afb6; }
   .mobile-world-message.mine > div > header { justify-content: flex-end; }
   .mobile-world-bubble { max-width: 100%; padding: 9px 11px; border: 1px solid rgba(71,102,124,.09); border-radius: 5px 14px 14px 14px; background: #fff; color: #3f5360; box-shadow: 0 4px 12px rgba(41,68,88,.045); }
   .mobile-world-message.mine .mobile-world-bubble { border: 0; border-radius: 14px 5px 14px 14px; background: #dcecef; color: #275763; box-shadow: none; }
@@ -1727,9 +1737,6 @@ body[data-theme="dark"] {
   .mobile-world-invite small { margin-top: 3px; color: #8a9ba5; font-size: 7px; }
   .mobile-world-invite i { color: #378088; font-size: 8px; font-style: normal; font-weight: 780; }
   .mobile-world-invite:disabled { opacity: .62; }
-  .mobile-world-message-action { display: flex; min-height: 17px; justify-content: flex-start; margin-top: 2px; }
-  .mobile-world-message.mine .mobile-world-message-action { justify-content: flex-end; }
-  .mobile-world-message-action button { display: flex; align-items: center; gap: 3px; padding: 2px 3px; border: 0; background: transparent; color: #a0abb2; font-size: 7px; }
   .mobile-world-empty { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; color: #91a1ab; text-align: center; }
   .mobile-world-empty > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 14px; background: #e5eef3; color: #648698; }
   .mobile-world-empty strong { margin-top: 9px; color: #627887; font-size: 11px; }

@@ -2292,7 +2292,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""}`}>
+    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""} ${!room && chatOpen && chatChannel === "world" ? "mobile-world-page-open" : ""}`}>
       <header className="glass topbar">
         <div className="brand">
           <span className="brand-icon"><Image src="/micosm-logo.webp" alt="" width={34} height={34} priority unoptimized /></span>
@@ -3717,12 +3717,13 @@ function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lob
   const gameTitle = gameCatalog.find((game) => game.id === activeGame)?.title ?? "棋类对局";
   const directUnread = Object.values(overview.directUnreads).reduce((sum, count) => sum + count, 0);
   const hallName = hall === "main" ? "主大厅" : historyGameName(hall);
+  const [mobileSection, setMobileSection] = useState<"chat" | "rooms">("chat");
 
   return (
     <section aria-label="手机世界频道" className="mobile-world-channel">
       <header className="mobile-world-header">
         <div><small>WORLD LOBBY</small><h1>{hallName}</h1><p><i />{lobbyCounts[hall]} 间棋局正在开放</p></div>
-        <button aria-label="打开好友私聊" onClick={onDirect} type="button"><MessageCircle size={19} /><span>私聊</span>{directUnread > 0 && <b>{Math.min(directUnread, 99)}</b>}</button>
+        <button aria-label="打开好友私聊" onClick={onDirect} title="好友私聊" type="button"><MessageCircle size={20} />{directUnread > 0 && <b>{Math.min(directUnread, 99)}</b>}</button>
       </header>
 
       <nav aria-label="大厅分类" className="mobile-world-halls">
@@ -3733,8 +3734,13 @@ function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lob
         ))}
       </nav>
 
-      <section aria-label="正在进行的公开棋局" className="mobile-live-rooms">
-        <header><div><Waypoints size={15} /><strong>实时棋局</strong></div><span>{lobbyBusy ? <LoaderCircle className="spin" size={14} /> : lobbyRooms.length ? "左右滑动查看更多" : "等待开局"}</span></header>
+      <nav aria-label="世界大厅内容" className="mobile-world-view-tabs">
+        <button className={mobileSection === "chat" ? "active" : ""} onClick={() => setMobileSection("chat")} type="button"><MessageCircle size={15} />聊天</button>
+        <button className={mobileSection === "rooms" ? "active" : ""} onClick={() => setMobileSection("rooms")} type="button"><Waypoints size={15} />公开棋局 <i>{lobbyRooms.length}</i></button>
+      </nav>
+
+      {mobileSection === "rooms" && <section aria-label="正在进行的公开棋局" className="mobile-live-rooms is-page">
+        <header><div><Waypoints size={15} /><strong>实时棋局</strong></div><span>{lobbyBusy ? <LoaderCircle className="spin" size={14} /> : lobbyRooms.length ? "下滑查看更多" : "等待开局"}</span></header>
         <div className="mobile-room-rail">
           {lobbyRooms.length === 0 ? (
             <div className="mobile-room-empty"><span><Gamepad2 size={17} /></span><div><strong>还没有公开棋局</strong><small>创建房间并开启观战后会出现在这里</small></div></div>
@@ -3753,9 +3759,9 @@ function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lob
             );
           })}
         </div>
-      </section>
+      </section>}
 
-      <section aria-label="频道消息" className="mobile-world-feed">
+      {mobileSection === "chat" && <section aria-label="频道消息" className="mobile-world-feed">
         <header><strong>频道消息</strong><span><Globe2 size={12} />文明交流</span></header>
         <div aria-live="polite" className="mobile-world-message-list">
           {messages.length === 0 ? (
@@ -3764,7 +3770,11 @@ function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lob
             <article className={`mobile-world-message ${message.isMine ? "mine" : ""}`} key={message.id}>
               {!message.isMine && <span className="mobile-world-avatar"><UserAvatar name={message.sender.displayName} src={message.sender.avatarUrl} /></span>}
               <div>
-                <header><strong>{message.isMine ? "我" : message.sender.displayName}</strong><time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></header>
+                <header>
+                  <strong>{message.isMine ? "我" : message.sender.displayName}</strong>
+                  <time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+                  {message.isMine ? <button aria-label="删除消息" onClick={() => onDelete(message.id)} title="删除消息" type="button"><Trash2 size={11} /></button> : <button aria-label="举报消息" onClick={() => onReport(message.id)} title="举报消息" type="button"><Flag size={11} /></button>}
+                </header>
                 <div className="mobile-world-bubble">
                   {message.body && <p>{message.body}</p>}
                   {message.room && (
@@ -3773,21 +3783,18 @@ function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lob
                     </button>
                   )}
                 </div>
-                <span className="mobile-world-message-action">
-                  {message.isMine ? <button aria-label="删除消息" onClick={() => onDelete(message.id)} type="button"><Trash2 size={12} />删除</button> : <button aria-label="举报消息" onClick={() => onReport(message.id)} type="button"><Flag size={12} />举报</button>}
-                </span>
               </div>
             </article>
           ))}
           <div ref={endRef} />
         </div>
-      </section>
+      </section>}
 
-      <form className="mobile-world-composer" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
+      {mobileSection === "chat" && <form className="mobile-world-composer" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
         <button aria-label={`发送${gameTitle}房间邀请`} disabled={busy} onClick={onInvite} title="发送房间邀请" type="button"><Gamepad2 size={19} /></button>
         <textarea aria-label="世界频道消息" maxLength={200} onChange={(event) => onTextChange(event.target.value)} placeholder="说点什么..." rows={1} value={text} />
         <button aria-label="发送消息" className="send" disabled={busy || !text.trim()} type="submit">{busy ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}</button>
-      </form>
+      </form>}
     </section>
   );
 }
