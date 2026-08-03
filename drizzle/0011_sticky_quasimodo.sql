@@ -1,0 +1,1 @@
+CREATE INDEX `chat_messages_hall_idx` ON `chat_messages` (`channel`,`hall`,`created_at`);

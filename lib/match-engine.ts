@@ -17,6 +17,7 @@ export type RematchRequest = { requester: MatchPlayer };
 export type MatchSnapshot = Omit<MatchState, "undoRequest" | "undoSnapshot" | "rematchRequest">;
 export type MatchClock = { blackMs: number; whiteMs: number; activeSince: number | null };
 export type GoScoring = { dead: MatchPoint[]; confirmations: MatchPlayer[] };
+export type SpectatorPolicy = "off" | "friends" | "public";
 
 export const RANK_TURN_MS: Record<"go" | "gomoku", number> = {
   go: 60 * 1000,
@@ -50,6 +51,7 @@ export type MatchState = {
   goScoring?: GoScoring | null;
   gomokuForbidden?: boolean;
   ai?: MatchAi;
+  spectatorConsents?: MatchPlayer[];
 };
 
 export type MatchAction =

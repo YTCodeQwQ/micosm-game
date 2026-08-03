@@ -6,7 +6,7 @@ import { ensureFriendSchema } from "../../../lib/friends";
 import { ensureMatchDiagnosticsSchema, findActionReceipt, normalizeActionId, recordMatchEvent, requestIdFor, saveActionReceipt } from "../../../lib/match-diagnostics";
 import { archiveFinishedMatch, ensureMatchHistorySchema } from "../../../lib/match-history";
 import { ensureRankSchema, rankChange } from "../../../lib/rank";
-import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchPlayer, type MatchState } from "../../../lib/match-engine";
+import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchPlayer, type MatchState, type SpectatorPolicy } from "../../../lib/match-engine";
 
 type RoomMode = "private" | "matchmaking" | "ranked" | "ai";
 type RoomRow = {
@@ -26,6 +26,7 @@ type RoomRow = {
   white_user_id: string | null;
   mode: RoomMode | null;
   board_size: number | null;
+  spectator_policy: SpectatorPolicy | null;
   state: string;
   version: number;
   created_at: number;
@@ -153,6 +154,7 @@ async function ensureSchema() {
     white_user_id TEXT,
     mode TEXT NOT NULL DEFAULT 'private',
     board_size INTEGER NOT NULL DEFAULT 0,
+    spectator_policy TEXT NOT NULL DEFAULT 'off',
     state TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
@@ -174,6 +176,7 @@ async function ensureSchema() {
     ["white_user_id", "ALTER TABLE game_rooms ADD COLUMN white_user_id TEXT"],
     ["mode", "ALTER TABLE game_rooms ADD COLUMN mode TEXT NOT NULL DEFAULT 'private'"],
     ["board_size", "ALTER TABLE game_rooms ADD COLUMN board_size INTEGER NOT NULL DEFAULT 0"],
+    ["spectator_policy", "ALTER TABLE game_rooms ADD COLUMN spectator_policy TEXT NOT NULL DEFAULT 'off'"],
   ] as const;
   for (const [name, sql] of additions) {
     if (!names.has(name)) await d1.prepare(sql).run();
@@ -191,6 +194,15 @@ async function ensureSchema() {
     UNIQUE(room_id, player_id)
   )`).run();
   await d1.prepare("CREATE INDEX IF NOT EXISTS game_room_presence_seen_idx ON game_room_presence(room_id, last_seen)").run();
+  await d1.prepare(`CREATE TABLE IF NOT EXISTS game_room_spectators (
+    room_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    last_seen INTEGER NOT NULL,
+    PRIMARY KEY (room_id, user_id)
+  )`).run();
+  await d1.prepare("CREATE INDEX IF NOT EXISTS game_room_spectators_seen_idx ON game_room_spectators(room_id, last_seen)").run();
+  await d1.prepare("CREATE INDEX IF NOT EXISTS game_rooms_lobby_idx ON game_rooms(mode, spectator_policy, updated_at)").run();
+  await d1.prepare("PRAGMA optimize").run();
   await ensureAuthSchema(d1);
   if (!names.has("black_user_id") || !names.has("white_user_id")) {
     await d1.prepare(`UPDATE game_rooms SET
@@ -243,6 +255,33 @@ function playerIdForUser(row: RoomRow, userId: string) {
   return null;
 }
 
+async function usersAreFriends(d1: D1, firstUserId: string, secondUserId: string) {
+  const [low, high] = firstUserId < secondUserId ? [firstUserId, secondUserId] : [secondUserId, firstUserId];
+  const friendship = await d1.prepare("SELECT status FROM friendships WHERE user_low = ? AND user_high = ?")
+    .bind(low, high).first<{ status: string }>();
+  return friendship?.status === "accepted";
+}
+
+async function canSpectateRoom(d1: D1, row: RoomRow, userId: string) {
+  if (["ranked", "ai"].includes(row.mode ?? "private")) return false;
+  const policy = row.spectator_policy ?? "off";
+  if (policy === "public") return true;
+  if (policy !== "friends") return false;
+  const playerUserIds = [row.host_user_id, row.guest_user_id, row.black_user_id, row.white_user_id]
+    .filter((id): id is string => Boolean(id && id !== userId));
+  for (const playerUserId of new Set(playerUserIds)) {
+    if (await usersAreFriends(d1, userId, playerUserId)) return true;
+  }
+  return false;
+}
+
+async function heartbeatSpectator(d1: D1, roomId: string, userId: string) {
+  const now = Date.now();
+  await d1.prepare(`INSERT INTO game_room_spectators (room_id, user_id, last_seen) VALUES (?, ?, ?)
+    ON CONFLICT(room_id, user_id) DO UPDATE SET last_seen = excluded.last_seen`).bind(roomId, userId, now).run();
+  await d1.prepare("DELETE FROM game_room_spectators WHERE last_seen < ?").bind(now - 60_000).run();
+}
+
 function publicRoom(row: RoomRow, playerId: string | null) {
   const storedState = parseState(row);
   const state = storedState.clock ? projectMatchClock(storedState) : storedState;
@@ -264,6 +303,7 @@ function publicRoom(row: RoomRow, playerId: string | null) {
     id: row.id,
     game: row.game,
     mode: row.mode ?? "private",
+    spectatorPolicy: row.mode === "ranked" || row.mode === "ai" ? "off" : row.spectator_policy ?? "off",
     role: roleFor(row, playerId, state),
     rolePending,
     opponentReady: Boolean(row.white_player),
@@ -293,7 +333,7 @@ async function recordRequestError(requestId: string, method: "GET" | "POST", err
   }
 }
 
-async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, mode: RoomMode, turnSeconds?: number, forbiddenMoves = false) {
+async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, mode: RoomMode, turnSeconds?: number, forbiddenMoves = false, spectatorPolicy: SpectatorPolicy = "off") {
   const playerId = crypto.randomUUID();
   const now = Date.now();
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -301,8 +341,8 @@ async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preferen
     const baseState = createMatchState(game, size, preference, game === "gomoku" && (mode === "ranked" || mode === "matchmaking" || forbiddenMoves));
     const state = mode === "private" && turnSeconds ? { ...baseState, clockConfigMs: turnSeconds * 1000 } : baseState;
     try {
-      await d1.prepare("INSERT INTO game_rooms (id, game, black_player, black_name, black_avatar, black_signature, host_user_id, black_user_id, mode, board_size, state, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
-        .bind(id, game, playerId, player.displayName, player.avatarKey, player.signature, player.id, player.id, mode, state.size, JSON.stringify(state), now, now).run();
+      await d1.prepare("INSERT INTO game_rooms (id, game, black_player, black_name, black_avatar, black_signature, host_user_id, black_user_id, mode, board_size, spectator_policy, state, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
+        .bind(id, game, playerId, player.displayName, player.avatarKey, player.signature, player.id, player.id, mode, state.size, mode === "private" ? spectatorPolicy : "off", JSON.stringify(state), now, now).run();
       await d1.prepare("INSERT INTO game_room_presence (room_id, player_id, last_seen) VALUES (?, ?, ?)").bind(id, playerId, now).run();
       const row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
       return { row: row as RoomRow, playerId };
@@ -601,6 +641,10 @@ export async function GET(request: Request) {
     let row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
     if (!row) return jsonError("room_not_found", "没有找到这个对局", 404, requestId);
     const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
+    if (!authenticatedPlayerId) {
+      if (!await canSpectateRoom(d1, row, sessionUser.id)) return jsonError("spectating_forbidden", "这个房间没有开放观战", 403, requestId);
+      await heartbeatSpectator(d1, row.id, sessionUser.id);
+    }
     row = await resolveMatchTimeout(d1, row, requestId);
     row = await heartbeatAndResolveDeparture(d1, row, authenticatedPlayerId, requestId);
     if (["matchmaking", "ranked"].includes(row.mode ?? "private") && !row.white_player && authenticatedPlayerId === row.black_player && row.updated_at < Date.now() - 5000) {
@@ -618,7 +662,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const requestId = requestIdFor(request);
   try {
-    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; turnSeconds?: number; clockMinutes?: number; forbiddenMoves?: boolean; roomId?: string; playerId?: string; actionId?: string; action?: MatchAction };
+    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; turnSeconds?: number; clockMinutes?: number; forbiddenMoves?: boolean; spectatorPolicy?: SpectatorPolicy; enabled?: boolean; roomId?: string; playerId?: string; actionId?: string; action?: MatchAction };
     const d1 = await ensureSchema();
     const sessionUser = await getSessionUser(request, d1);
     if (!sessionUser) return jsonError("auth_required", "请先登录", 401, requestId);
@@ -691,7 +735,8 @@ export async function POST(request: Request) {
         if (turnSeconds !== undefined && (!Number.isInteger(turnSeconds) || turnSeconds < 5 || turnSeconds > 600)) {
           return jsonError("invalid_clock", "每手用时需要设置为 5 至 600 秒", 400, requestId);
         }
-        const created = await createWaitingRoom(d1, payload.game, size, colorPreference, sessionUser, "private", turnSeconds, payload.forbiddenMoves === true);
+        const spectatorPolicy: SpectatorPolicy = ["off", "friends", "public"].includes(payload.spectatorPolicy ?? "off") ? payload.spectatorPolicy ?? "off" : "off";
+        const created = await createWaitingRoom(d1, payload.game, size, colorPreference, sessionUser, "private", turnSeconds, payload.forbiddenMoves === true, spectatorPolicy);
         await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game: payload.game, mode: "private", turnSeconds: turnSeconds ?? null } });
         return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
       }
@@ -747,6 +792,26 @@ export async function POST(request: Request) {
     }
 
     row = await resolveMatchTimeout(d1, row, requestId);
+
+    if (payload.type === "spectatorConsent") {
+      if ((row.mode ?? "private") !== "matchmaking") return jsonError("spectator_consent_unavailable", "只有快速匹配需要双方确认观战", 409, requestId);
+      const authenticatedPlayerId = playerIdForUser(row, sessionUser.id) ?? "";
+      const role = roleFor(row, authenticatedPlayerId);
+      if (!role || !row.white_player) return jsonError("not_a_player", "你不是这个匹配对局的玩家", 403, requestId);
+      const state = parseState(row);
+      const consentSet = new Set(state.spectatorConsents ?? []);
+      if (payload.enabled === false) consentSet.delete(role);
+      else consentSet.add(role);
+      const spectatorConsents = [...consentSet] as MatchPlayer[];
+      const policy: SpectatorPolicy = spectatorConsents.includes("black") && spectatorConsents.includes("white") ? "public" : "off";
+      const next = { ...state, spectatorConsents, notice: policy === "public" ? "双方已同意开放观战" : payload.enabled === false ? `${role === "black" ? "黑方" : "白方"}关闭了观战同意` : `${role === "black" ? "黑方" : "白方"}同意开放观战` };
+      const result = await d1.prepare("UPDATE game_rooms SET spectator_policy = ?, state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?")
+        .bind(policy, JSON.stringify(next), Date.now(), id, row.version).run();
+      if (!result.meta.changes) return jsonError("version_conflict", "房间状态刚刚更新，请重试", 409, requestId);
+      const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>() as RoomRow;
+      await notifyRoom(id, updated.version);
+      return Response.json({ room: publicRoom(updated, authenticatedPlayerId) });
+    }
 
     if (payload.type === "cancelMatchmaking") {
       const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);

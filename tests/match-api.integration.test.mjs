@@ -39,7 +39,92 @@ async function register(client, identity) {
   });
   assert.equal(response.status, 201, JSON.stringify(data));
   assert.ok(data.user?.id);
+  return data.user;
 }
+
+test("spectating policies keep ranked private and require matchmaking consent", { skip: !origin }, async () => {
+  const host = new TestClient();
+  const guest = new TestClient();
+  const friend = new TestClient();
+  const stranger = new TestClient();
+  const hostUser = await register(host, uniqueIdentity("V03H", "133"));
+  const guestUser = await register(guest, uniqueIdentity("V03G", "132"));
+  const friendUser = await register(friend, uniqueIdentity("V03F", "131"));
+  await register(stranger, uniqueIdentity("V03X", "130"));
+
+  const privateRoom = await host.post("/api/match", {
+    type: "create",
+    game: "go",
+    size: 13,
+    colorPreference: "black",
+    spectatorPolicy: "friends",
+  });
+  assert.equal(privateRoom.response.status, 201, JSON.stringify(privateRoom.data));
+  const privateRoomId = privateRoom.data.room.id;
+
+  const strangerBeforeFriendship = await stranger.request(`/api/match?roomId=${privateRoomId}`);
+  assert.equal(strangerBeforeFriendship.response.status, 403);
+  assert.equal(strangerBeforeFriendship.data.error.code, "spectating_forbidden");
+
+  await host.post("/api/friends", { type: "sendRequest", targetUserId: friendUser.id });
+  const accepted = await friend.post("/api/friends", { type: "acceptRequest", targetUserId: hostUser.id });
+  assert.equal(accepted.response.status, 200, JSON.stringify(accepted.data));
+  const friendLobby = await friend.request("/api/lobby?hall=go");
+  assert.equal(friendLobby.response.status, 200, JSON.stringify(friendLobby.data));
+  assert.ok(friendLobby.data.rooms.some((room) => room.id === privateRoomId && room.joinable));
+
+  const joinedPrivate = await guest.post("/api/match", { type: "join", roomId: privateRoomId });
+  assert.equal(joinedPrivate.response.status, 200, JSON.stringify(joinedPrivate.data));
+  const friendSpectates = await friend.request(`/api/match?roomId=${privateRoomId}`);
+  assert.equal(friendSpectates.response.status, 200, JSON.stringify(friendSpectates.data));
+  assert.equal(friendSpectates.data.room.role, null);
+  assert.equal(friendSpectates.data.room.spectatorPolicy, "friends");
+
+  const forbiddenAction = await friend.post("/api/match", {
+    type: "action",
+    roomId: privateRoomId,
+    playerId: "spectator",
+    actionId: crypto.randomUUID(),
+    action: { type: "play", row: 6, col: 6 },
+  });
+  assert.equal(forbiddenAction.response.status, 403);
+
+  const rankedFirst = await host.post("/api/match", { type: "rankmake", game: "gomoku" });
+  assert.equal(rankedFirst.response.status, 201, JSON.stringify(rankedFirst.data));
+  const rankedSecond = await guest.post("/api/match", { type: "rankmake", game: "gomoku" });
+  assert.equal(rankedSecond.response.status, 200, JSON.stringify(rankedSecond.data));
+  const rankedSpectate = await stranger.request(`/api/match?roomId=${rankedFirst.data.room.id}`);
+  assert.equal(rankedSpectate.response.status, 403);
+  assert.equal(rankedSpectate.data.error.code, "spectating_forbidden");
+
+  const matchmakingFirst = await friend.post("/api/match", { type: "matchmake", game: "reversi", size: 8 });
+  assert.equal(matchmakingFirst.response.status, 201, JSON.stringify(matchmakingFirst.data));
+  const matchmakingSecond = await stranger.post("/api/match", { type: "matchmake", game: "reversi", size: 8 });
+  assert.equal(matchmakingSecond.response.status, 200, JSON.stringify(matchmakingSecond.data));
+  const matchmakingRoomId = matchmakingFirst.data.room.id;
+
+  const firstConsent = await friend.post("/api/match", { type: "spectatorConsent", roomId: matchmakingRoomId, enabled: true });
+  assert.equal(firstConsent.response.status, 200, JSON.stringify(firstConsent.data));
+  assert.equal(firstConsent.data.room.spectatorPolicy, "off");
+  const blockedAfterOneConsent = await host.request(`/api/match?roomId=${matchmakingRoomId}`);
+  assert.equal(blockedAfterOneConsent.response.status, 403);
+
+  const secondConsent = await stranger.post("/api/match", { type: "spectatorConsent", roomId: matchmakingRoomId, enabled: true });
+  assert.equal(secondConsent.response.status, 200, JSON.stringify(secondConsent.data));
+  assert.equal(secondConsent.data.room.spectatorPolicy, "public");
+  const publicLobby = await host.request("/api/lobby?hall=reversi");
+  assert.equal(publicLobby.response.status, 200, JSON.stringify(publicLobby.data));
+  assert.ok(publicLobby.data.rooms.some((room) => room.id === matchmakingRoomId && room.spectatable));
+  const allowedAfterBothConsent = await host.request(`/api/match?roomId=${matchmakingRoomId}`);
+  assert.equal(allowedAfterBothConsent.response.status, 200, JSON.stringify(allowedAfterBothConsent.data));
+  assert.equal(allowedAfterBothConsent.data.room.role, null);
+
+  const consentRevoked = await friend.post("/api/match", { type: "spectatorConsent", roomId: matchmakingRoomId, enabled: false });
+  assert.equal(consentRevoked.response.status, 200, JSON.stringify(consentRevoked.data));
+  assert.equal(consentRevoked.data.room.spectatorPolicy, "off");
+  const blockedAfterRevoke = await host.request(`/api/match?roomId=${matchmakingRoomId}`);
+  assert.equal(blockedAfterRevoke.response.status, 403);
+});
 
 test("two users can complete a private match with idempotent actions and diagnostics", { skip: !origin }, async () => {
   const host = new TestClient();

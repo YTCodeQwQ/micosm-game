@@ -71,6 +71,20 @@
       "when": 1785599635660,
       "tag": "0009_wet_firelord",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1785777592347,
+      "tag": "0010_square_vector",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1785777983967,
+      "tag": "0011_sticky_quasimodo",
+      "breakpoints": true
     }
   ]
 }

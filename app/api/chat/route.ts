@@ -6,6 +6,7 @@ import { ensureFriendSchema, friendPair } from "../../../lib/friends";
 type MessageRow = {
   id: string;
   channel: "world" | "direct";
+  hall: "main" | "go" | "gomoku" | "reversi";
   sender_id: string;
   recipient_id: string | null;
   body: string;
@@ -45,6 +46,7 @@ async function hydrateMessages(d1: ReturnType<typeof getD1>, rows: MessageRow[],
   return rows.map((row) => ({
     id: row.id,
     channel: row.channel,
+    hall: row.hall,
     body: row.body,
     createdAt: row.created_at,
     isMine: row.sender_id === viewerId,
@@ -65,13 +67,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const view = url.searchParams.get("view");
     const channel = url.searchParams.get("channel");
+    const hall = ["main", "go", "gomoku", "reversi"].includes(url.searchParams.get("hall") ?? "main") ? url.searchParams.get("hall") ?? "main" : "main";
 
     if (view === "overview") {
-      const worldRead = await d1.prepare("SELECT last_read_at FROM chat_reads WHERE user_id = ? AND channel = 'world' AND peer_id = ''").bind(user.id).first<{ last_read_at: number }>();
       const worldUnread = await d1.prepare(`SELECT COUNT(*) AS count FROM chat_messages m
-        WHERE m.channel = 'world' AND m.deleted_at IS NULL AND m.sender_id != ? AND m.created_at > ?
+        WHERE m.channel = 'world' AND m.deleted_at IS NULL AND m.sender_id != ?
+        AND m.created_at > COALESCE((SELECT r.last_read_at FROM chat_reads r WHERE r.user_id = ? AND r.channel = 'world' AND r.peer_id = COALESCE(m.hall, 'main')), 0)
         AND NOT EXISTS (SELECT 1 FROM friendships f WHERE f.status = 'blocked' AND ((f.user_low = ? AND f.user_high = m.sender_id) OR (f.user_high = ? AND f.user_low = m.sender_id)))`)
-        .bind(user.id, worldRead?.last_read_at ?? 0, user.id, user.id).first<{ count: number }>();
+        .bind(user.id, user.id, user.id, user.id).first<{ count: number }>();
       const directUnreads = await d1.prepare(`SELECT m.sender_id AS user_id, COUNT(*) AS count FROM chat_messages m
         WHERE m.channel = 'direct' AND m.recipient_id = ? AND m.deleted_at IS NULL
         AND m.created_at > COALESCE((SELECT r.last_read_at FROM chat_reads r WHERE r.user_id = ? AND r.channel = 'direct' AND r.peer_id = m.sender_id), 0)
@@ -82,17 +85,17 @@ export async function GET(request: Request) {
 
     let rows: MessageRow[] = [];
     if (channel === "world") {
-      const result = await d1.prepare(`SELECT m.id, m.channel, m.sender_id, m.recipient_id, m.body, m.room_id, m.created_at,
+      const result = await d1.prepare(`SELECT m.id, m.channel, COALESCE(m.hall, 'main') AS hall, m.sender_id, m.recipient_id, m.body, m.room_id, m.created_at,
           u.display_name, u.signature, u.avatar_key
         FROM chat_messages m JOIN users u ON u.id = m.sender_id
-        WHERE m.channel = 'world' AND m.deleted_at IS NULL
+        WHERE m.channel = 'world' AND COALESCE(m.hall, 'main') = ? AND m.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM friendships f WHERE f.status = 'blocked' AND ((f.user_low = ? AND f.user_high = m.sender_id) OR (f.user_high = ? AND f.user_low = m.sender_id)))
-        ORDER BY m.created_at DESC LIMIT 80`).bind(user.id, user.id).all<MessageRow>();
+        ORDER BY m.created_at DESC LIMIT 80`).bind(hall, user.id, user.id).all<MessageRow>();
       rows = result.results.reverse();
     } else if (channel === "direct") {
       const peerId = url.searchParams.get("userId") ?? "";
       if (!peerId || !await areFriends(d1, user.id, peerId)) return Response.json({ error: { code: "not_friends", message: "只能与好友私聊" } }, { status: 403 });
-      const result = await d1.prepare(`SELECT m.id, m.channel, m.sender_id, m.recipient_id, m.body, m.room_id, m.created_at,
+      const result = await d1.prepare(`SELECT m.id, m.channel, COALESCE(m.hall, 'main') AS hall, m.sender_id, m.recipient_id, m.body, m.room_id, m.created_at,
           u.display_name, u.signature, u.avatar_key
         FROM chat_messages m JOIN users u ON u.id = m.sender_id
         WHERE m.channel = 'direct' AND m.deleted_at IS NULL
@@ -110,13 +113,13 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { type?: string; channel?: "world" | "direct"; targetUserId?: string; body?: string; roomId?: string; messageId?: string };
+    const payload = await request.json() as { type?: string; channel?: "world" | "direct"; hall?: "main" | "go" | "gomoku" | "reversi"; targetUserId?: string; body?: string; roomId?: string; messageId?: string };
     const { d1, user } = await prepare(request);
     if (!user) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
     const now = Date.now();
 
     if (payload.type === "markRead") {
-      const peerId = payload.channel === "direct" ? payload.targetUserId ?? "" : "";
+      const peerId = payload.channel === "direct" ? payload.targetUserId ?? "" : ["main", "go", "gomoku", "reversi"].includes(payload.hall ?? "main") ? payload.hall ?? "main" : "main";
       if (!payload.channel || (payload.channel === "direct" && !peerId)) return Response.json({ error: { code: "invalid_channel", message: "无法标记这个频道" } }, { status: 400 });
       await d1.prepare("INSERT INTO chat_reads (user_id, channel, peer_id, last_read_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, channel, peer_id) DO UPDATE SET last_read_at = excluded.last_read_at")
         .bind(user.id, payload.channel, peerId, now).run();
@@ -138,6 +141,7 @@ export async function POST(request: Request) {
 
     if (payload.type !== "send" || !payload.channel) return Response.json({ error: { code: "invalid_request", message: "无法识别这个聊天操作" } }, { status: 400 });
     const body = cleanChatMessage(payload.body);
+    const hall = payload.channel === "world" && ["main", "go", "gomoku", "reversi"].includes(payload.hall ?? "main") ? payload.hall ?? "main" : "main";
     const targetId = payload.channel === "direct" ? payload.targetUserId ?? "" : "";
     if (payload.channel === "direct" && (!targetId || !await areFriends(d1, user.id, targetId))) return Response.json({ error: { code: "not_friends", message: "只能与好友私聊" } }, { status: 403 });
 
@@ -151,7 +155,7 @@ export async function POST(request: Request) {
     if (!body && !roomId) return Response.json({ error: { code: "empty_message", message: "消息不能为空" } }, { status: 400 });
 
     const latest = payload.channel === "world"
-      ? await d1.prepare("SELECT created_at FROM chat_messages WHERE sender_id = ? AND channel = 'world' ORDER BY created_at DESC LIMIT 1").bind(user.id).first<{ created_at: number }>()
+      ? await d1.prepare("SELECT created_at FROM chat_messages WHERE sender_id = ? AND channel = 'world' AND hall = ? ORDER BY created_at DESC LIMIT 1").bind(user.id, hall).first<{ created_at: number }>()
       : await d1.prepare("SELECT created_at FROM chat_messages WHERE sender_id = ? AND recipient_id = ? AND channel = 'direct' ORDER BY created_at DESC LIMIT 1").bind(user.id, targetId).first<{ created_at: number }>();
     const minimumInterval = payload.channel === "world" ? 2500 : 700;
     if (latest && now - latest.created_at < minimumInterval) return Response.json({ error: { code: "rate_limited", message: "发送得太快了，请稍等" } }, { status: 429 });
@@ -161,8 +165,8 @@ export async function POST(request: Request) {
     }
 
     const id = crypto.randomUUID();
-    await d1.prepare("INSERT INTO chat_messages (id, channel, sender_id, recipient_id, body, room_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(id, payload.channel, user.id, targetId || null, body, roomId, now).run();
+    await d1.prepare("INSERT INTO chat_messages (id, channel, hall, sender_id, recipient_id, body, room_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, payload.channel, hall, user.id, targetId || null, body, roomId, now).run();
     await d1.prepare("DELETE FROM chat_messages WHERE channel = 'world' AND created_at < ?").bind(now - WORLD_RETENTION_MS).run();
     return Response.json({ sent: true, id });
   } catch (error) {

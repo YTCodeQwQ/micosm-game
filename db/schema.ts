@@ -40,11 +40,12 @@ export const gameRooms = sqliteTable("game_rooms", {
   whiteUserId: text("white_user_id"),
   mode: text("mode").notNull().default("private"),
   boardSize: integer("board_size").notNull().default(0),
+  spectatorPolicy: text("spectator_policy").notNull().default("off"),
   state: text("state").notNull(),
   version: integer("version").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-});
+}, (table) => [index("game_rooms_lobby_idx").on(table.mode, table.spectatorPolicy, table.updatedAt)]);
 
 export const matchmakingQueue = sqliteTable("matchmaking_queue", {
   queueKey: text("queue_key").primaryKey(),
@@ -59,6 +60,15 @@ export const gameRoomPresence = sqliteTable("game_room_presence", {
 }, (table) => [
   uniqueIndex("game_room_presence_player_unique").on(table.roomId, table.playerId),
   index("game_room_presence_seen_idx").on(table.roomId, table.lastSeen),
+]);
+
+export const gameRoomSpectators = sqliteTable("game_room_spectators", {
+  roomId: text("room_id").notNull(),
+  userId: text("user_id").notNull(),
+  lastSeen: integer("last_seen").notNull(),
+}, (table) => [
+  uniqueIndex("game_room_spectators_user_unique").on(table.roomId, table.userId),
+  index("game_room_spectators_seen_idx").on(table.roomId, table.lastSeen),
 ]);
 
 export const friendships = sqliteTable("friendships", {
@@ -96,6 +106,7 @@ export const gameInvites = sqliteTable("game_invites", {
 export const chatMessages = sqliteTable("chat_messages", {
   id: text("id").primaryKey(),
   channel: text("channel").notNull(),
+  hall: text("hall").notNull().default("main"),
   senderId: text("sender_id").notNull(),
   recipientId: text("recipient_id"),
   body: text("body").notNull().default(""),
@@ -104,6 +115,7 @@ export const chatMessages = sqliteTable("chat_messages", {
   deletedAt: integer("deleted_at"),
 }, (table) => [
   index("chat_messages_world_idx").on(table.channel, table.createdAt),
+  index("chat_messages_hall_idx").on(table.channel, table.hall, table.createdAt),
   index("chat_messages_direct_idx").on(table.senderId, table.recipientId, table.createdAt),
 ]);
 

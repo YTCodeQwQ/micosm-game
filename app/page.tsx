@@ -56,7 +56,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { activateMatch, applyMatchAction, createMatchState, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchState as RemoteMatchState } from "../lib/match-engine";
+import { activateMatch, applyMatchAction, createMatchState, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchState as RemoteMatchState, type SpectatorPolicy } from "../lib/match-engine";
 import { RANK_NAMES, rankLabel } from "../lib/rank";
 import { STORY_SEASON_ONE, STORY_SEASON_TITLE } from "../lib/story-season-one";
 
@@ -68,6 +68,7 @@ type RoomView = {
   id: string;
   game: MatchGame;
   mode: "private" | "matchmaking" | "ranked" | "ai";
+  spectatorPolicy: SpectatorPolicy;
   role: Player | null;
   rolePending: boolean;
   opponentReady: boolean;
@@ -124,15 +125,36 @@ type FriendsData = {
 type FriendTab = "friends" | "requests" | "blocked";
 type FriendConfirm = { type: "removeFriend" | "blockUser"; person: FriendPerson } | null;
 type ChatChannel = "world" | "direct";
+type LobbyHall = "main" | GameId;
 type ChatMessage = {
   id: string;
   channel: ChatChannel;
+  hall: LobbyHall;
   body: string;
   createdAt: number;
   isMine: boolean;
   sender: { id: string; displayName: string; signature: string; avatarUrl: string | null };
   room: { id: string; game: string; open: boolean } | null;
 };
+type LobbyRoom = {
+  id: string;
+  game: GameId;
+  mode: "private" | "matchmaking";
+  spectatorPolicy: SpectatorPolicy;
+  status: RemoteMatchState["status"];
+  turn: Player;
+  moveCount: number;
+  boardSize: number;
+  board: Stone[][];
+  lastMove: Point | null;
+  players: { black: string | null; white: string | null };
+  profiles: { black: { avatarUrl: string | null }; white: { avatarUrl: string | null } };
+  joinable: boolean;
+  spectatable: boolean;
+  spectatorCount: number;
+  updatedAt: number;
+};
+type LobbyCounts = Record<LobbyHall, number>;
 type ChatOverview = { worldUnread: number; directUnreads: Record<string, number> };
 type RankGame = "go" | "gomoku";
 type RankProfile = {
@@ -564,6 +586,10 @@ export default function HomePage() {
   const [chatText, setChatText] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [chatOverview, setChatOverview] = useState<ChatOverview>({ worldUnread: 0, directUnreads: {} });
+  const [lobbyHall, setLobbyHall] = useState<LobbyHall>("main");
+  const [lobbyRooms, setLobbyRooms] = useState<LobbyRoom[]>([]);
+  const [lobbyCounts, setLobbyCounts] = useState<LobbyCounts>({ main: 0, go: 0, gomoku: 0, reversi: 0 });
+  const [lobbyBusy, setLobbyBusy] = useState(false);
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aiSetupOpen, setAiSetupOpen] = useState(false);
@@ -593,6 +619,7 @@ export default function HomePage() {
   const [privateClockEnabled, setPrivateClockEnabled] = useState(false);
   const [privateTurnSeconds, setPrivateTurnSeconds] = useState(60);
   const [privateForbiddenEnabled, setPrivateForbiddenEnabled] = useState(false);
+  const [privateSpectatorPolicy, setPrivateSpectatorPolicy] = useState<SpectatorPolicy>("off");
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [actionBusy, setActionBusy] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
@@ -909,7 +936,7 @@ export default function HomePage() {
     let disposed = false;
     const pollMessages = async () => {
       try {
-        const query = chatChannel === "world" ? "channel=world" : `channel=direct&userId=${encodeURIComponent(chatPeer?.id ?? "")}`;
+        const query = chatChannel === "world" ? `channel=world&hall=${encodeURIComponent(lobbyHall)}` : `channel=direct&userId=${encodeURIComponent(chatPeer?.id ?? "")}`;
         const response = await fetch(`/api/chat?${query}`, { cache: "no-store" });
         if (!response.ok) return;
         const data = await response.json() as { messages: ChatMessage[] };
@@ -918,7 +945,7 @@ export default function HomePage() {
         await fetch("/api/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ type: "markRead", channel: chatChannel, targetUserId: chatPeer?.id }),
+          body: JSON.stringify({ type: "markRead", channel: chatChannel, hall: lobbyHall, targetUserId: chatPeer?.id }),
         });
         setChatOverview((current) => chatChannel === "world"
           ? { ...current, worldUnread: 0 }
@@ -930,7 +957,29 @@ export default function HomePage() {
     void pollMessages();
     const timer = window.setInterval(pollMessages, 3_000);
     return () => { disposed = true; window.clearInterval(timer); };
-  }, [chatChannel, chatOpen, chatPeer]);
+  }, [chatChannel, chatOpen, chatPeer, lobbyHall]);
+
+  useEffect(() => {
+    if (!chatOpen || chatChannel !== "world" || !authUser) return;
+    let disposed = false;
+    const refreshLobby = async () => {
+      setLobbyBusy(true);
+      try {
+        const response = await fetch(`/api/lobby?hall=${encodeURIComponent(lobbyHall)}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { rooms: LobbyRoom[]; counts: LobbyCounts };
+        if (!disposed) {
+          setLobbyRooms(data.rooms);
+          setLobbyCounts(data.counts);
+        }
+      } finally {
+        if (!disposed) setLobbyBusy(false);
+      }
+    };
+    void refreshLobby();
+    const timer = window.setInterval(refreshLobby, 4_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [authUser, chatChannel, chatOpen, lobbyHall]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "end" });
@@ -955,17 +1004,17 @@ export default function HomePage() {
       try {
         const saved = window.sessionStorage.getItem("micosm-room");
         if (!saved) return;
-        const session = JSON.parse(saved) as { roomId?: string; playerId?: string };
-        if (session.roomId && session.playerId) {
+        const session = JSON.parse(saved) as { roomId?: string; playerId?: string; spectating?: boolean };
+        if (session.roomId && (session.playerId || session.spectating)) {
           void (async () => {
             try {
-              const response = await fetch(`/api/match?roomId=${encodeURIComponent(session.roomId as string)}&playerId=${encodeURIComponent(session.playerId as string)}`, { cache: "no-store" });
+              const response = await fetch(`/api/match?roomId=${encodeURIComponent(session.roomId as string)}${session.spectating ? "&spectate=1" : `&playerId=${encodeURIComponent(session.playerId as string)}`}`, { cache: "no-store" });
               if (!response.ok) throw new Error("房间已失效");
               const data = await response.json() as { room: RoomView };
-              if (!data.room.role && !data.room.rolePending) throw new Error("玩家身份已失效");
+              if (!data.room.role && !data.room.rolePending && !session.spectating) throw new Error("玩家身份已失效");
               if (disposed) return;
               setRoom(data.room);
-              setPlayerId(session.playerId as string);
+              setPlayerId(session.playerId ?? "");
               if (data.room.role && data.room.players[data.room.role]) setDisplayName(data.room.players[data.room.role] as string);
               setActiveGame(data.room.game);
               if (data.room.game === "go") setGoSize(data.room.state.size);
@@ -987,17 +1036,30 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (!currentRoomId || !playerId) return;
+    if (!currentRoomId || (!playerId && room?.role !== null)) return;
     const roomId = currentRoomId;
     const token = playerId;
+    const spectating = !token;
     let disposed = false;
     let socket: WebSocket | null = null;
     let reconnectTimer = 0;
     let pingTimer = 0;
     const refreshRoom = async () => {
       try {
-        const response = await fetch(`/api/match?roomId=${encodeURIComponent(roomId)}&playerId=${encodeURIComponent(token)}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("room_unavailable");
+        const response = await fetch(`/api/match?roomId=${encodeURIComponent(roomId)}${spectating ? "&spectate=1" : `&playerId=${encodeURIComponent(token)}`}`, { cache: "no-store" });
+        if (!response.ok) {
+          if (spectating && response.status === 403) {
+            window.sessionStorage.removeItem("micosm-room");
+            if (!disposed) {
+              setRoom(null);
+              setPlayerId("");
+              setConnectionState("idle");
+              showToast("这场对局已关闭观战，已返回大厅", "warning");
+            }
+            return;
+          }
+          throw new Error("room_unavailable");
+        }
         const data = await response.json() as { room: RoomView };
         if (disposed) return;
         pollFailures.current = 0;
@@ -1052,7 +1114,7 @@ export default function HomePage() {
       window.clearInterval(recoveryTimer);
       socket?.close(1000, "Room changed");
     };
-  }, [currentRoomId, playerId]);
+  }, [currentRoomId, playerId, room?.role]);
 
   useEffect(() => {
     const ai = room?.state.ai;
@@ -1484,7 +1546,7 @@ export default function HomePage() {
 
   async function refreshCurrentChat() {
     if (chatChannel === "direct" && !chatPeer) return;
-    const query = chatChannel === "world" ? "channel=world" : `channel=direct&userId=${encodeURIComponent(chatPeer?.id ?? "")}`;
+    const query = chatChannel === "world" ? `channel=world&hall=${encodeURIComponent(lobbyHall)}` : `channel=direct&userId=${encodeURIComponent(chatPeer?.id ?? "")}`;
     const response = await fetch(`/api/chat?${query}`, { cache: "no-store" });
     if (!response.ok) return;
     const data = await response.json() as { messages: ChatMessage[] };
@@ -1499,7 +1561,7 @@ export default function HomePage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "send", channel: chatChannel, targetUserId: chatPeer?.id, body }),
+        body: JSON.stringify({ type: "send", channel: chatChannel, hall: lobbyHall, targetUserId: chatPeer?.id, body }),
       });
       const data = await response.json() as { error?: { message?: string } };
       if (!response.ok) throw new Error(data.error?.message ?? "消息发送失败");
@@ -1522,7 +1584,7 @@ export default function HomePage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "send", channel: chatChannel, targetUserId: chatPeer?.id, roomId: targetRoom.id }),
+        body: JSON.stringify({ type: "send", channel: chatChannel, hall: lobbyHall, targetUserId: chatPeer?.id, roomId: targetRoom.id }),
       });
       const data = await response.json() as { error?: { message?: string } };
       if (!response.ok) throw new Error(data.error?.message ?? "房间邀请发送失败");
@@ -1679,7 +1741,7 @@ export default function HomePage() {
     showToast("已退出账号");
   }
 
-  function adoptRoom(nextRoom: RoomView, token: string) {
+  function adoptRoom(nextRoom: RoomView, token = "") {
     setRoom(nextRoom);
     setPlayerId(token);
     setActiveGame(nextRoom.game);
@@ -1688,7 +1750,30 @@ export default function HomePage() {
     pollFailures.current = 0;
     setConnectionState("online");
     window.localStorage.setItem("micosm-player-name", displayName.trim());
-    window.sessionStorage.setItem("micosm-room", JSON.stringify({ roomId: nextRoom.id, playerId: token }));
+    window.sessionStorage.setItem("micosm-room", JSON.stringify({ roomId: nextRoom.id, playerId: token, spectating: !token }));
+  }
+
+  async function openLobbyRoom(target: LobbyRoom) {
+    if (room) return showToast("请先退出当前房间");
+    if (target.joinable) {
+      await joinRoom(target.id);
+      setChatOpen(false);
+      return;
+    }
+    if (!target.spectatable) return showToast("这盘棋暂时不能观战");
+    setLobbyBusy(true);
+    try {
+      const response = await fetch(`/api/match?roomId=${encodeURIComponent(target.id)}&spectate=1`, { cache: "no-store" });
+      const data = await response.json() as { room?: RoomView; error?: { message?: string } };
+      if (!response.ok || !data.room) throw new Error(data.error?.message ?? "无法进入观战");
+      adoptRoom(data.room);
+      setChatOpen(false);
+      showToast("已进入观战", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "无法进入观战", "warning");
+    } finally {
+      setLobbyBusy(false);
+    }
   }
 
   function getPlayerName() {
@@ -1704,7 +1789,7 @@ export default function HomePage() {
       const response = await fetch("/api/match", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "create", game: activeGame, size: activeGame === "go" ? goSize : undefined, colorPreference: activeGame === "go" || activeGame === "gomoku" ? colorPreference : "black", turnSeconds: privateClockEnabled ? privateTurnSeconds : undefined, forbiddenMoves: activeGame === "gomoku" ? privateForbiddenEnabled : undefined }),
+        body: JSON.stringify({ type: "create", game: activeGame, size: activeGame === "go" ? goSize : undefined, colorPreference: activeGame === "go" || activeGame === "gomoku" ? colorPreference : "black", turnSeconds: privateClockEnabled ? privateTurnSeconds : undefined, forbiddenMoves: activeGame === "gomoku" ? privateForbiddenEnabled : undefined, spectatorPolicy: privateSpectatorPolicy }),
       });
       const data = await response.json() as { room?: RoomView; playerId?: string; error?: { message?: string } };
       if (!response.ok || !data.room || !data.playerId) throw new Error(data.error?.message ?? "创建房间失败");
@@ -1851,6 +1936,27 @@ export default function HomePage() {
     } catch (error) {
       if (action.type === "play") setBoardFeedback("invalid");
       showToast(error instanceof Error ? error.message : "这一步无法执行", "warning");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function toggleMatchmakingSpectators() {
+    if (!room || room.mode !== "matchmaking" || !room.role || actionBusy) return;
+    const enabled = !(room.state.spectatorConsents ?? []).includes(room.role);
+    setActionBusy(true);
+    try {
+      const response = await fetch("/api/match", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "spectatorConsent", roomId: room.id, playerId, enabled }),
+      });
+      const data = await response.json() as { room?: RoomView; error?: { message?: string } };
+      if (!response.ok || !data.room) throw new Error(data.error?.message ?? "无法更新观战设置");
+      setRoom(data.room);
+      showToast(data.room.spectatorPolicy === "public" ? "双方已同意，观战已开放" : enabled ? "已同意开放观战，等待对手确认" : "已撤回观战同意");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "无法更新观战设置", "warning");
     } finally {
       setActionBusy(false);
     }
@@ -2149,12 +2255,18 @@ export default function HomePage() {
           currentUserId={authUser?.id ?? ""}
           endRef={chatEndRef}
           friends={friendsData.friends}
+          hall={lobbyHall}
+          lobbyBusy={lobbyBusy}
+          lobbyCounts={lobbyCounts}
+          lobbyRooms={lobbyRooms}
           messages={chatMessages}
           onChannelChange={(channel) => { setChatChannel(channel); setChatMessages([]); if (channel === "world") setChatPeer(null); }}
           onClose={() => setChatOpen(false)}
           onDelete={(messageId) => void chatMessageAction("delete", messageId)}
           onInvite={() => void sendChatRoomInvite()}
           onJoin={(message) => void joinChatRoom(message)}
+          onLobbyRoom={(target) => void openLobbyRoom(target)}
+          onHallChange={(hall) => { setLobbyHall(hall); setChatMessages([]); }}
           onPeerChange={(peer) => { setChatPeer(peer); setChatMessages([]); }}
           onReport={(messageId) => void chatMessageAction("report", messageId)}
           onSend={() => void sendChatMessage()}
@@ -2243,9 +2355,9 @@ export default function HomePage() {
               {room && (
                 <div className="room-chip" title={room.mode === "private" ? "复制邀请码" : room.mode === "ranked" ? "排位对局" : room.mode === "ai" ? "人机对战" : "匹配对局"}>
                   {room.mode === "private" ? (
-                    <button onClick={copyInviteCode} type="button"><KeyRound size={14} />{room.id}<span>{room.rolePending ? "?" : room.role === "black" ? "黑" : "白"}</span></button>
+                    <button onClick={copyInviteCode} type="button"><KeyRound size={14} />{room.id}<span>{room.rolePending ? "?" : room.role === "black" ? "黑" : room.role === "white" ? "白" : "观"}</span></button>
                   ) : (
-                    <span className="room-chip-label">{room.mode === "ranked" ? <Trophy size={14} /> : room.mode === "ai" ? <Bot size={14} /> : <Search size={14} />}{room.mode === "ranked" ? "排位对局" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.name ?? "电脑"}` : "匹配对局"}<i>{room.rolePending ? "?" : room.role === "black" ? "黑" : "白"}</i></span>
+                    <span className="room-chip-label">{room.mode === "ranked" ? <Trophy size={14} /> : room.mode === "ai" ? <Bot size={14} /> : <Search size={14} />}{room.mode === "ranked" ? "排位对局" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.name ?? "电脑"}` : "匹配对局"}<i>{room.rolePending ? "?" : room.role === "black" ? "黑" : room.role === "white" ? "白" : "观"}</i></span>
                   )}
                   <button aria-label={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} onClick={() => { if (room.mode !== "private" && !room.opponentReady) void cancelMatchmaking(); else setConfirmIntent("leave"); }} title={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} type="button"><X size={15} /></button>
                 </div>
@@ -2412,8 +2524,9 @@ export default function HomePage() {
           <footer className={`play-footer ${isMyTurn ? "is-my-turn" : ""}`}>
             <div className="status-pill"><span className={`mini-stone ${visibleTurn}`} /><span><strong>{gameStatus}</strong>{remoteState && ["playing", "scoring"].includes(remoteState.status) && <small>{remoteState.notice}</small>}</span></div>
             <div className="footer-actions">
-              {review ? <button className="secondary-action" onClick={closeReview} type="button"><X size={16} />结束复盘</button> : <>
+              {review ? <button className="secondary-action" onClick={closeReview} type="button"><X size={16} />结束复盘</button> : room && !room.role ? <button className="secondary-action" onClick={clearRoom} type="button"><ChevronLeft size={16} />退出观战</button> : <>
               {room && <span className={`connection-state ${connectionState}`}>{connectionState === "reconnecting" ? <WifiOff size={14} /> : <Wifi size={14} />}{connectionState === "reconnecting" ? "重连中" : "已连接"}</span>}
+              {room?.mode === "matchmaking" && room.role && <button className={`secondary-action spectator-consent-action ${room.spectatorPolicy === "public" ? "is-open" : ""}`} disabled={actionBusy} onClick={() => void toggleMatchmakingSpectators()} type="button"><Users size={16} />{room.spectatorPolicy === "public" ? "观战已开放" : (room.state.spectatorConsents ?? []).includes(room.role) ? "已同意观战" : "同意开放观战"}</button>}
               {room?.mode === "ai" && aiError && <button className="secondary-action ai-retry-action" disabled={aiThinking} onClick={() => setAiRetryNonce((value) => value + 1)} type="button"><RotateCcw size={16} />重新计算</button>}
               <button className="secondary-action" disabled={room?.mode === "ranked" || !canRequestUndo || actionBusy} onClick={() => void submitMatchAction({ type: "requestUndo" })} title={room?.mode === "ranked" ? "排位对局不能悔棋" : canRequestUndo ? room?.mode === "ai" ? "撤销双方上一轮落子" : "申请撤销刚刚的一手" : room?.mode === "ai" ? "电脑落子后可以悔棋" : "只能撤销自己刚刚落下的一手"} type="button"><Undo2 size={16} />悔棋</button>
               <button className="secondary-action resign-action" disabled={!room?.opponentReady || matchEnded || actionBusy} onClick={() => setConfirmIntent("resign")} title="认输并结束本局" type="button"><Flag size={16} />认输</button>
@@ -2427,7 +2540,7 @@ export default function HomePage() {
         </section>
 
         <aside className="glass info-panel" aria-label="对局信息">
-          <div className="panel-title"><div><small>MATCH</small><h2>对局信息</h2></div>{room?.mode === "ai" ? <span className="ai-panel-badge"><Bot size={17} /></span> : <IconButton label="邀请玩家" onClick={invitePlayers}><Users size={18} /></IconButton>}</div>
+          <div className="panel-title"><div><small>MATCH</small><h2>对局信息</h2></div>{room?.mode === "ai" ? <span className="ai-panel-badge"><Bot size={17} /></span> : room && !room.role ? <span className="ai-panel-badge"><Users size={17} /></span> : <IconButton label="邀请玩家" onClick={invitePlayers}><Users size={18} /></IconButton>}</div>
 
           <section className="turn-card">
             <span className="info-label">当前状态</span>
@@ -2452,7 +2565,7 @@ export default function HomePage() {
           </section>
 
           <div className="focus-note"><Sparkles size={18} /><div><strong>{room ? room.mode === "ranked" ? "排位对局" : room.mode === "matchmaking" ? "服务器匹配" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.title ?? "标准"}` : `邀请码 ${room.id}` : "多人模式"}</strong><p>{room ? `${roomRole} · ${room.opponentReady ? opponentDisplayName ? `${room.mode === "ai" ? "电脑棋手" : "对手"} ${opponentDisplayName}` : "双方已连接" : "等待对手"}` : "可以随机匹配，也可以邀请好友。"}</p></div></div>
-          <button className="primary-action" disabled={room?.mode === "ranked"} onClick={resetActiveGame} title={room?.mode === "ranked" ? "排位对局不能重开" : "重新开始"} type="button"><RotateCcw size={17} />{room?.mode === "ranked" ? "排位进行中" : "重新开始"}</button>
+          <button className="primary-action" disabled={room?.mode === "ranked" || Boolean(room && !room.role)} onClick={resetActiveGame} title={room?.mode === "ranked" ? "排位对局不能重开" : room && !room.role ? "观战模式不能操作棋局" : "重新开始"} type="button"><RotateCcw size={17} />{room && !room.role ? "观战中" : room?.mode === "ranked" ? "排位进行中" : "重新开始"}</button>
         </aside>
       </div>
       ) : (
@@ -2468,10 +2581,12 @@ export default function HomePage() {
           privateClockEnabled={privateClockEnabled}
           privateTurnSeconds={privateTurnSeconds}
           privateForbiddenEnabled={privateForbiddenEnabled}
+          privateSpectatorPolicy={privateSpectatorPolicy}
           onColorChange={setColorPreference}
           onClockEnabledChange={setPrivateClockEnabled}
           onTurnSecondsChange={setPrivateTurnSeconds}
           onForbiddenEnabledChange={setPrivateForbiddenEnabled}
+          onSpectatorPolicyChange={setPrivateSpectatorPolicy}
           onCreate={() => void createRoom()}
           onGameChange={selectGame}
           onGoSizeChange={changeGoSize}
@@ -2768,7 +2883,7 @@ function ResponsiveArtwork({ alt, desktop, mobile }: { alt: string; desktop: str
   );
 }
 
-function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled }: {
+function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: {
   activeGame: GameId;
   authUser: AuthUser | null;
   busy: boolean;
@@ -2780,9 +2895,11 @@ function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, fav
   privateClockEnabled: boolean;
   privateTurnSeconds: number;
   privateForbiddenEnabled: boolean;
+  privateSpectatorPolicy: SpectatorPolicy;
   onClockEnabledChange: (enabled: boolean) => void;
   onTurnSecondsChange: (seconds: number) => void;
   onForbiddenEnabledChange: (enabled: boolean) => void;
+  onSpectatorPolicyChange: (policy: SpectatorPolicy) => void;
   onColorChange: (preference: ColorPreference) => void;
   onCreate: () => void;
   onGameChange: (game: GameId) => void;
@@ -2882,6 +2999,14 @@ function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, fav
             <small>限制黑方三三、四四与长连</small>
           </div>
         )}
+        <div className="lobby-spectator-row">
+          <span><Users size={15} />房间观战</span>
+          <div aria-label="好友房观战权限">
+            <button className={privateSpectatorPolicy === "off" ? "active" : ""} onClick={() => onSpectatorPolicyChange("off")} type="button">关闭</button>
+            <button className={privateSpectatorPolicy === "friends" ? "active" : ""} onClick={() => onSpectatorPolicyChange("friends")} type="button">仅好友</button>
+            <button className={privateSpectatorPolicy === "public" ? "active" : ""} onClick={() => onSpectatorPolicyChange("public")} type="button">公开</button>
+          </div>
+        </div>
         <div className="lobby-room-actions">
           <button disabled={busy || !authUser} onClick={onCreate} type="button"><Plus size={17} />创建房间</button>
           <form onSubmit={(event) => { event.preventDefault(); onJoin(); }}>
@@ -3287,19 +3412,58 @@ function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
   );
 }
 
-function ChatPanel({ activeGame, busy, channel, currentUserId, endRef, friends, messages, onChannelChange, onClose, onDelete, onInvite, onJoin, onPeerChange, onReport, onSend, onTextChange, overview, peer, text }: {
+function LobbyMiniBoard({ room }: { room: LobbyRoom }) {
+  const stones = room.board.flatMap((row, rowIndex) => row.flatMap((stone, columnIndex) => stone ? [{ stone, row: rowIndex, column: columnIndex }] : []));
+  const isReversi = room.game === "reversi";
+  const denominator = Math.max(1, isReversi ? room.boardSize : room.boardSize - 1);
+  const position = (index: number) => `${(index + (isReversi ? 0.5 : 0)) / denominator * 100}%`;
+  const boardStyle = { "--mini-grid-size": isReversi ? room.boardSize : room.boardSize - 1 } as CSSProperties;
+  return (
+    <div className={`lobby-mini-board ${room.game}`} aria-hidden="true" style={boardStyle}>
+      {stones.map((stone) => <i className={stone.stone} key={`${stone.row}-${stone.column}`} style={{ left: position(stone.column), top: position(stone.row) }} />)}
+      {room.lastMove && <b style={{ left: position(room.lastMove[1]), top: position(room.lastMove[0]) }} />}
+    </div>
+  );
+}
+
+function LobbyRoomCard({ onOpen, room }: { onOpen: () => void; room: LobbyRoom }) {
+  const gameName = historyGameName(room.game);
+  const action = room.joinable ? "加入" : room.spectatable ? "观战" : "等待";
+  return (
+    <article className="lobby-room-card">
+      <LobbyMiniBoard room={room} />
+      <div className="lobby-room-card-body">
+        <header><span>{gameName}</span><i>{room.mode === "matchmaking" ? "快速匹配" : room.spectatorPolicy === "friends" ? "好友可见" : "公开房"}</i></header>
+        <div className="lobby-room-players">
+          <span><UserAvatar name={room.players.black ?? "黑"} src={room.profiles.black.avatarUrl} /><strong>{room.players.black ?? "等待黑方"}</strong></span>
+          <em>VS</em>
+          <span><UserAvatar name={room.players.white ?? "白"} src={room.profiles.white.avatarUrl} /><strong>{room.players.white ?? "等待白方"}</strong></span>
+        </div>
+        <footer><span><i className={`mini-stone ${room.turn}`} />{room.status === "waiting" ? "等待加入" : `${room.moveCount} 手`}</span><span><Users size={13} />{room.spectatorCount}</span><button disabled={!room.joinable && !room.spectatable} onClick={onOpen} type="button">{action}<ChevronRight size={14} /></button></footer>
+      </div>
+    </article>
+  );
+}
+
+function ChatPanel({ activeGame, busy, channel, currentUserId, endRef, friends, hall, lobbyBusy, lobbyCounts, lobbyRooms, messages, onChannelChange, onClose, onDelete, onHallChange, onInvite, onJoin, onLobbyRoom, onPeerChange, onReport, onSend, onTextChange, overview, peer, text }: {
   activeGame: GameId;
   busy: boolean;
   channel: ChatChannel;
   currentUserId: string;
   endRef: RefObject<HTMLDivElement | null>;
   friends: FriendPerson[];
+  hall: LobbyHall;
+  lobbyBusy: boolean;
+  lobbyCounts: LobbyCounts;
+  lobbyRooms: LobbyRoom[];
   messages: ChatMessage[];
   onChannelChange: (channel: ChatChannel) => void;
   onClose: () => void;
   onDelete: (messageId: string) => void;
+  onHallChange: (hall: LobbyHall) => void;
   onInvite: () => void;
   onJoin: (message: ChatMessage) => void;
+  onLobbyRoom: (room: LobbyRoom) => void;
   onPeerChange: (peer: FriendPerson | null) => void;
   onReport: (messageId: string) => void;
   onSend: () => void;
@@ -3312,14 +3476,23 @@ function ChatPanel({ activeGame, busy, channel, currentUserId, endRef, friends, 
   const directUnread = Object.values(overview.directUnreads).reduce((sum, count) => sum + count, 0);
   const showConversation = channel === "world" || Boolean(peer);
   return (
-    <aside aria-label="消息中心" className="chat-panel">
-      <header><div><small>MESSAGES</small><h2>{channel === "world" ? "世界频道" : peer?.displayName ?? "好友聊天"}</h2></div><button aria-label="关闭聊天" onClick={onClose} type="button"><X size={18} /></button></header>
+    <aside aria-label="消息中心" className={`chat-panel ${channel === "world" ? "world-lobby-panel" : ""}`}>
+      <header><div><small>{channel === "world" ? "WORLD LOBBY" : "MESSAGES"}</small><h2>{channel === "world" ? hall === "main" ? "世界主大厅" : `${historyGameName(hall)}大厅` : peer?.displayName ?? "好友聊天"}</h2></div><button aria-label="关闭聊天" onClick={onClose} type="button"><X size={18} /></button></header>
       <div className="chat-tabs" aria-label="聊天频道">
         <button className={channel === "world" ? "active" : ""} onClick={() => onChannelChange("world")} type="button"><Globe2 size={15} />世界{overview.worldUnread > 0 && <span>{Math.min(overview.worldUnread, 99)}</span>}</button>
         <button className={channel === "direct" ? "active" : ""} onClick={() => onChannelChange("direct")} type="button"><MessageCircle size={15} />私聊{directUnread > 0 && <span>{Math.min(directUnread, 99)}</span>}</button>
       </div>
 
-      {channel === "world" && <div className="world-channel-note"><Globe2 size={15} /><span>公共大厅</span><i>文明交流</i></div>}
+      {channel === "world" && <div className="world-hall-tabs" aria-label="大厅分类">
+        {(["main", "go", "gomoku", "reversi"] as LobbyHall[]).map((targetHall) => <button className={hall === targetHall ? "active" : ""} key={targetHall} onClick={() => onHallChange(targetHall)} type="button"><span>{targetHall === "main" ? "主大厅" : historyGameName(targetHall)}</span><i>{lobbyCounts[targetHall]}</i></button>)}
+      </div>}
+      {channel === "world" && <div className="world-channel-note"><Globe2 size={15} /><span>{hall === "main" ? "全站交流" : `${historyGameName(hall)}交流区`}</span><i>文明交流</i></div>}
+      {channel === "world" && <section className="lobby-room-browser" aria-label="公开房间">
+        <header><div><small>LIVE ROOMS</small><strong>公开棋局</strong></div><span>{lobbyBusy ? <LoaderCircle className="spin" size={15} /> : `${lobbyRooms.length} 间`}</span></header>
+        <div className="lobby-room-list">
+          {lobbyRooms.length === 0 ? <div className="lobby-room-empty"><Waypoints size={26} /><strong>暂时没有公开棋局</strong><p>创建好友房并开启观战后，会出现在这里。</p></div> : lobbyRooms.map((targetRoom) => <LobbyRoomCard key={targetRoom.id} onOpen={() => onLobbyRoom(targetRoom)} room={targetRoom} />)}
+        </div>
+      </section>}
       {channel === "direct" && peer && <button className="chat-peer-bar" onClick={() => onPeerChange(null)} type="button"><span className="chat-peer-avatar"><UserAvatar name={peer.displayName} src={peer.avatarUrl} /></span><span><strong>{peer.displayName}</strong><small>{peer.online ? "在线" : "离线"}</small></span><X size={15} /></button>}
 
       {channel === "direct" && !peer ? (
