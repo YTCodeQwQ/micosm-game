@@ -1761,7 +1761,7 @@ body[data-theme="dark"] {
   .mobile-match-players .match-player > .user-avatar { width: 36px; height: 36px; }
   .move-confirm-bar { grid-template-columns: minmax(0,1fr) 108px; padding-right: 6px; padding-left: 6px; }
   .move-selection-copy small { display: none; }
-  .mobile-direction-pad { grid-template: repeat(3,27px) / repeat(3,33px); }
+  .mobile-direction-pad { grid-template-rows: repeat(3,27px); grid-template-columns: repeat(3,33px); }
   .mobile-direction-pad button, .mobile-direction-pad .move-center { width: 33px; height: 27px; }
   .standard-board { width: calc(100vw - 20px); }
 }
