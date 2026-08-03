@@ -2290,7 +2290,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""}`}>
+    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""}`}>
       <header className="glass topbar">
         <div className="brand">
           <span className="brand-icon"><Image src="/micosm-logo.webp" alt="" width={34} height={34} priority unoptimized /></span>
@@ -2387,6 +2387,7 @@ export default function HomePage() {
 
       {accountOpen && authUser && (
         <aside aria-label="账号菜单" className="account-popover">
+          <header className="mobile-account-header"><small>PLAYER PROFILE</small><h2>我的</h2></header>
           <div className="account-summary">
             <UserAvatar name={authUser.displayName} src={authUser.avatarUrl} />
             <div><strong>{authUser.displayName}</strong><small>{authUser.publicId}</small><p>{authUser.signature || authUser.phone}</p></div>
@@ -2399,6 +2400,7 @@ export default function HomePage() {
         </aside>
       )}
 
+      <div className="app-primary-content">
       {mainView === "games" ? room ? (
       <div className="app-grid">
         <aside className="glass game-library match-library" aria-label="当前对局">
@@ -2765,6 +2767,7 @@ export default function HomePage() {
       ) : (
         <StoryMode user={authUser} />
       )}
+      </div>
 
       {(!authReady || !authUser) && (
         <div className="auth-backdrop">

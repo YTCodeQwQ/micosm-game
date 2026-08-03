@@ -1459,6 +1459,8 @@ body[data-theme="dark"] {
 .mobile-match-menu-trigger, .mobile-actions-head, .mobile-action-scrim, .mobile-reset-action { display: none; }
 .mobile-primary-nav, .mobile-game-home { display: none; }
 .desktop-home-shell { display: contents; }
+.app-primary-content { display: contents; }
+.mobile-account-header { display: none; }
 
 /* Mobile-first play experience */
 @media (max-width: 600px) {
@@ -1591,7 +1593,14 @@ body[data-theme="dark"] {
   .mobile-join-room input { min-width: 0; padding: 0 11px; outline: 0; font-size: 10px; text-transform: uppercase; }
   .mobile-join-room button { display: grid; place-items: center; }
 
-  .micosm-app:not(.match-session-active) .chat-panel, .micosm-app:not(.match-session-active) .friend-panel { z-index: 72; top: 0; right: 0; bottom: calc(78px + env(safe-area-inset-bottom)); left: 0; width: 100%; height: auto; max-height: none; padding: max(12px,env(safe-area-inset-top)) 10px 10px; border: 0; border-radius: 0; box-shadow: none; }
+  .mobile-page-open { min-height: 100dvh; background: #eef4f8; }
+  .mobile-page-open .app-primary-content { display: none; }
+  .mobile-page-open > .topbar { position: relative; top: 0; box-shadow: none; }
+  .mobile-page-open > .chat-panel, .mobile-page-open > .friend-panel { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; width: calc(100% + 14px); height: auto; min-height: calc(100dvh - 151px - env(safe-area-inset-bottom)); max-height: none; margin: 8px -7px 0; padding: 15px 12px 10px; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background-color: #f4f8fb; background-image: none; box-shadow: none; backdrop-filter: none; }
+  .mobile-page-open > .chat-panel > header, .mobile-page-open > .friend-panel > header { min-height: 57px; align-items: center; padding: 1px 2px 12px; }
+  .mobile-page-open > .chat-panel > header small, .mobile-page-open > .friend-panel > header small { color: #4b8991; font-size: 8px; }
+  .mobile-page-open > .chat-panel > header h2, .mobile-page-open > .friend-panel > header h2 { margin-top: 4px; color: #29475b; font-size: 23px; }
+  .mobile-page-open > .chat-panel > header > button, .mobile-page-open > .friend-panel > header > button { display: none; }
   .chat-panel.world-lobby-panel { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto auto auto 178px minmax(150px,1fr) auto; column-gap: 0; }
   .world-lobby-panel > header, .world-lobby-panel > .chat-tabs, .world-lobby-panel > .world-hall-tabs { grid-column: 1; }
   .world-lobby-panel > .world-channel-note { grid-column: 1; grid-row: 4; }
@@ -1616,10 +1625,20 @@ body[data-theme="dark"] {
   .direct-conversation.has-peer { display: flex; }
   .direct-conversation .chat-peer-bar { cursor: pointer; }
 
-  .account-popover { z-index: 72; top: 70px; right: 7px; bottom: calc(78px + env(safe-area-inset-bottom)); left: 7px; display: flex; width: auto; flex-direction: column; padding: 16px; border-radius: 20px; }
-  .account-summary { min-height: 78px; grid-template-columns: 54px minmax(0,1fr) 20px; }
-  .account-summary > .user-avatar { width: 54px; height: 54px; border-radius: 15px; }
-  .account-popover > button { min-height: 52px; margin-top: 6px; border-radius: 13px; font-size: 11px; }
+  .mobile-page-open > .account-popover { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; display: flex; width: calc(100% + 14px); min-height: calc(100dvh - 151px - env(safe-area-inset-bottom)); flex-direction: column; margin: 8px -7px 0; padding: 16px 12px; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background: #f4f8fb; box-shadow: none; backdrop-filter: none; }
+  .mobile-account-header { display: block; min-height: 57px; padding: 1px 2px 12px; }
+  .mobile-account-header small { color: #4b8991; font-size: 8px; font-weight: 800; }
+  .mobile-account-header h2 { margin: 4px 0 0; color: #29475b; font-size: 23px; }
+  .mobile-page-open .account-summary { position: relative; min-height: 148px; grid-template-columns: 72px minmax(0,1fr) 22px; gap: 13px; padding: 20px 17px; overflow: hidden; border: 0; border-radius: 18px; background: #29435e url('/micosm-match-table-mobile.webp') 76% center / cover no-repeat; color: #fff; box-shadow: 0 12px 28px rgba(38,65,89,.17); }
+  .mobile-page-open .account-summary::before { content: ""; position: absolute; inset: 0; background: rgba(32,59,81,.72); }
+  .mobile-page-open .account-summary > * { position: relative; z-index: 1; }
+  .mobile-page-open .account-summary > .user-avatar { width: 72px; height: 72px; border: 3px solid rgba(255,255,255,.7); border-radius: 20px; }
+  .mobile-page-open .account-summary strong { color: #fff; font-size: 16px; }
+  .mobile-page-open .account-summary small { margin-top: 6px; color: #9ed9d8; }
+  .mobile-page-open .account-summary p { margin-top: 8px; color: rgba(255,255,255,.7); font-size: 9px; }
+  .mobile-page-open .account-summary > svg { color: #f2d38c; }
+  .mobile-page-open .account-popover > button { min-height: 58px; margin-top: 8px; padding: 0 15px; border: 1px solid rgba(72,106,130,.1); border-radius: 14px; background: #fff; color: #4c697d; font-size: 11px; box-shadow: 0 6px 17px rgba(44,69,89,.06); }
+  .mobile-page-open .account-popover > button:last-child { margin-top: auto; border-color: rgba(170,82,73,.12); background: #fff7f6; color: #a0524a; }
 
   .micosm-app.match-session-active {
     height: 100dvh;

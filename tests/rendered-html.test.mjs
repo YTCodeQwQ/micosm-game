@@ -208,10 +208,14 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /移动落点/);
   assert.match(page, /手机主导航/);
   assert.match(page, /mobile-game-home/);
+  assert.match(page, /mobile-page-open/);
+  assert.match(page, /PLAYER PROFILE/);
   assert.match(page, /和好友下一盘/);
   assert.match(page, /棋社日常/);
   assert.match(styles, /\.footer-actions\.is-open/);
   assert.match(styles, /\.mobile-primary-nav/);
+  assert.match(styles, /\.mobile-page-open \.app-primary-content/);
+  assert.match(styles, /\.mobile-page-open > \.chat-panel/);
   assert.match(styles, /\.mobile-home-hero/);
   assert.match(styles, /\.mobile-room-studio/);
   assert.match(styles, /\.play-footer\.has-mobile-menu \{ z-index: 72; \}/);
