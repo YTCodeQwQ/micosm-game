@@ -593,6 +593,7 @@ export default function HomePage() {
   const [lobbyCounts, setLobbyCounts] = useState<LobbyCounts>({ main: 0, go: 0, gomoku: 0, reversi: 0 });
   const [lobbyBusy, setLobbyBusy] = useState(false);
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
+  const [mobileMatchMenuOpen, setMobileMatchMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aiSetupOpen, setAiSetupOpen] = useState(false);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("normal");
@@ -1970,6 +1971,7 @@ export default function HomePage() {
   function clearRoom() {
     setRoom(null);
     setPendingMove(null);
+    setMobileMatchMenuOpen(false);
     setPlayerId("");
     setAiThinking(false);
     setAiError("");
@@ -2261,7 +2263,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"}`}>
+    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""}`}>
       <header className="glass topbar">
         <div className="brand">
           <span className="brand-icon"><Image src="/micosm-logo.webp" alt="" width={34} height={34} priority unoptimized /></span>
@@ -2585,19 +2587,23 @@ export default function HomePage() {
             </div>
           )}
 
+          {mobileMatchMenuOpen && <button aria-label="关闭对局操作" className="mobile-action-scrim" onClick={() => setMobileMatchMenuOpen(false)} type="button" />}
           <footer className={`play-footer ${isMyTurn ? "is-my-turn" : ""}`}>
             <div className="status-pill"><span className={`mini-stone ${visibleTurn}`} /><span><strong>{gameStatus}</strong>{remoteState && ["playing", "scoring"].includes(remoteState.status) && <small>{remoteState.notice}</small>}</span></div>
-            <div className="footer-actions">
+            <div className={`footer-actions ${mobileMatchMenuOpen ? "is-open" : ""}`}>
+              <button aria-label="打开对局操作" className="mobile-match-menu-trigger" onClick={() => setMobileMatchMenuOpen(true)} title="对局操作" type="button"><MoreHorizontal size={20} /></button>
+              <div className="mobile-actions-head"><span><small>MATCH ACTIONS</small><strong>对局操作</strong></span><button aria-label="关闭对局操作" onClick={() => setMobileMatchMenuOpen(false)} type="button"><X size={18} /></button></div>
               {review ? <button className="secondary-action" onClick={closeReview} type="button"><X size={16} />结束复盘</button> : room && !room.role ? <button className="secondary-action" onClick={clearRoom} type="button"><ChevronLeft size={16} />退出观战</button> : <>
               {room && <span className={`connection-state ${connectionState}`}>{connectionState === "reconnecting" ? <WifiOff size={14} /> : <Wifi size={14} />}{connectionState === "reconnecting" ? "重连中" : "已连接"}</span>}
-              {room?.mode === "matchmaking" && room.role && <button className={`secondary-action spectator-consent-action ${room.spectatorPolicy === "public" ? "is-open" : ""}`} disabled={actionBusy} onClick={() => void toggleMatchmakingSpectators()} type="button"><Users size={16} />{room.spectatorPolicy === "public" ? "观战已开放" : (room.state.spectatorConsents ?? []).includes(room.role) ? "已同意观战" : "同意开放观战"}</button>}
+              {room?.mode === "matchmaking" && room.role && <button className={`secondary-action spectator-consent-action ${room.spectatorPolicy === "public" ? "is-open" : ""}`} disabled={actionBusy} onClick={() => { setMobileMatchMenuOpen(false); void toggleMatchmakingSpectators(); }} type="button"><Users size={16} />{room.spectatorPolicy === "public" ? "观战已开放" : (room.state.spectatorConsents ?? []).includes(room.role) ? "已同意观战" : "同意开放观战"}</button>}
               {room?.mode === "ai" && aiError && <button className="secondary-action ai-retry-action" disabled={aiThinking} onClick={() => setAiRetryNonce((value) => value + 1)} type="button"><RotateCcw size={16} />重新计算</button>}
-              <button className="secondary-action" disabled={room?.mode === "ranked" || !canRequestUndo || actionBusy} onClick={() => void submitMatchAction({ type: "requestUndo" })} title={room?.mode === "ranked" ? "排位对局不能悔棋" : canRequestUndo ? room?.mode === "ai" ? "撤销双方上一轮落子" : "申请撤销刚刚的一手" : room?.mode === "ai" ? "电脑落子后可以悔棋" : "只能撤销自己刚刚落下的一手"} type="button"><Undo2 size={16} />悔棋</button>
-              <button className="secondary-action resign-action" disabled={!room?.opponentReady || matchEnded || actionBusy} onClick={() => setConfirmIntent("resign")} title="认输并结束本局" type="button"><Flag size={16} />认输</button>
+              <button className="secondary-action" disabled={room?.mode === "ranked" || !canRequestUndo || actionBusy} onClick={() => { setMobileMatchMenuOpen(false); void submitMatchAction({ type: "requestUndo" }); }} title={room?.mode === "ranked" ? "排位对局不能悔棋" : canRequestUndo ? room?.mode === "ai" ? "撤销双方上一轮落子" : "申请撤销刚刚的一手" : room?.mode === "ai" ? "电脑落子后可以悔棋" : "只能撤销自己刚刚落下的一手"} type="button"><Undo2 size={16} />悔棋</button>
+              <button className="secondary-action resign-action" disabled={!room?.opponentReady || matchEnded || actionBusy} onClick={() => { setMobileMatchMenuOpen(false); setConfirmIntent("resign"); }} title="认输并结束本局" type="button"><Flag size={16} />认输</button>
+              <button className="secondary-action mobile-reset-action" disabled={room?.mode === "ranked" || matchEnded || actionBusy} onClick={() => { setMobileMatchMenuOpen(false); resetActiveGame(); }} type="button"><RotateCcw size={16} />重新开始</button>
               {activeGame === "go" && remoteState?.status === "scoring" ? <>
-                <button className="secondary-action" disabled={actionBusy} onClick={() => void submitMatchAction({ type: "resumeGo" })} type="button"><Play size={16} />继续对局</button>
-                <button className="secondary-action score-confirm-action" disabled={actionBusy || remoteState.goScoring?.confirmations.includes(room?.role ?? "black")} onClick={() => void submitMatchAction({ type: "confirmScore" })} type="button"><Check size={16} />{remoteState.goScoring?.confirmations.includes(room?.role ?? "black") ? "已确认" : "确认数子"}</button>
-              </> : activeGame === "go" && <button className="secondary-action" disabled={!room || !room.opponentReady || matchEnded || actionBusy} onClick={() => void submitMatchAction({ type: "pass" })} type="button"><Pause size={16} />停一手</button>}
+                <button className="secondary-action" disabled={actionBusy} onClick={() => { setMobileMatchMenuOpen(false); void submitMatchAction({ type: "resumeGo" }); }} type="button"><Play size={16} />继续对局</button>
+                <button className="secondary-action score-confirm-action" disabled={actionBusy || remoteState.goScoring?.confirmations.includes(room?.role ?? "black")} onClick={() => { setMobileMatchMenuOpen(false); void submitMatchAction({ type: "confirmScore" }); }} type="button"><Check size={16} />{remoteState.goScoring?.confirmations.includes(room?.role ?? "black") ? "已确认" : "确认数子"}</button>
+              </> : activeGame === "go" && <button className="secondary-action" disabled={!room || !room.opponentReady || matchEnded || actionBusy} onClick={() => { setMobileMatchMenuOpen(false); void submitMatchAction({ type: "pass" }); }} type="button"><Pause size={16} />停一手</button>}
               </>}
             </div>
           </footer>
