@@ -1659,6 +1659,21 @@ body[data-theme="dark"] {
   .mobile-page-open .account-summary > svg { color: #f2d38c; }
   .mobile-page-open .account-popover > button { min-height: 58px; margin-top: 8px; padding: 0 15px; border: 1px solid rgba(72,106,130,.1); border-radius: 14px; background: #fff; color: #4c697d; font-size: 11px; box-shadow: 0 6px 17px rgba(44,69,89,.06); }
   .mobile-page-open .account-popover > button:last-child { margin-top: auto; border-color: rgba(170,82,73,.12); background: #fff7f6; color: #a0524a; }
+  .mobile-account-page-open > .topbar { min-height: 42px; padding: 3px 6px; border-radius: 13px; }
+  .mobile-account-page-open > .topbar .brand { gap: 7px; }
+  .mobile-account-page-open > .topbar .brand-icon { width: 30px; height: 30px; border-radius: 9px; }
+  .mobile-account-page-open > .topbar .brand-icon img { width: 23px; height: 23px; }
+  .mobile-account-page-open > .topbar .brand strong { font-size: 11px; }
+  .mobile-account-page-open > .account-popover { margin-top: 3px; padding-top: 8px; }
+  .mobile-account-page-open .mobile-account-header { display: flex; min-height: 30px; align-items: baseline; gap: 8px; padding: 0 2px 4px; }
+  .mobile-account-page-open .mobile-account-header h2 { margin: 0; font-size: 17px; }
+  .mobile-account-page-open .account-summary { min-height: 108px; grid-template-columns: 58px minmax(0,1fr) 19px; gap: 11px; padding: 13px 14px; border-radius: 15px; background-position: 70% center; }
+  .mobile-account-page-open .account-summary > .user-avatar { width: 58px; height: 58px; border-width: 2px; border-radius: 16px; }
+  .mobile-account-page-open .account-summary strong { font-size: 14px; }
+  .mobile-account-page-open .account-summary small { margin-top: 4px; }
+  .mobile-account-page-open .account-summary p { margin-top: 5px; }
+  .mobile-account-page-open .account-popover > button { min-height: 46px; margin-top: 5px; padding: 0 13px; border-radius: 11px; font-size: 10px; box-shadow: 0 4px 12px rgba(44,69,89,.045); }
+  .mobile-account-page-open .account-popover > button:last-child { margin-top: 5px; }
 
   .mobile-page-open > .chat-panel.world-lobby-panel { display: none; }
   .mobile-page-open > .mobile-world-channel {
