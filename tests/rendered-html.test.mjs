@@ -204,9 +204,16 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /\.mobile-direction-pad/);
   assert.match(styles, /\.selected-point/);
   assert.match(styles, /\.go-end-action/);
-  assert.match(styles, /calc\(100dvh - 280px\)/);
+  assert.match(styles, /calc\(100dvh - 294px\)/);
   assert.match(page, /移动落点/);
+  assert.match(page, /手机主导航/);
+  assert.match(page, /mobile-game-home/);
+  assert.match(page, /和好友下一盘/);
+  assert.match(page, /棋社日常/);
   assert.match(styles, /\.footer-actions\.is-open/);
+  assert.match(styles, /\.mobile-primary-nav/);
+  assert.match(styles, /\.mobile-home-hero/);
+  assert.match(styles, /\.mobile-room-studio/);
   assert.match(styles, /\.play-footer\.has-mobile-menu \{ z-index: 72; \}/);
   assert.match(styles, /grid-template-rows: repeat\(3,27px\)/);
   assert.match(styles, /button\.stone\.black \{ background: radial-gradient\(circle closest-side at 50% 50%/);

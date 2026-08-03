@@ -2319,6 +2319,13 @@ export default function HomePage() {
         </div>
       </header>
 
+      <nav className="mobile-primary-nav" aria-label="手机主导航">
+        <button className={mainView === "games" && !chatOpen && !friendPanelOpen && !accountOpen ? "active" : ""} onClick={() => { setMainView("games"); setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(false); }} type="button"><Play size={20} fill="currentColor" /><span>游戏</span></button>
+        <button className={chatOpen && chatChannel === "world" ? "active" : ""} onClick={() => { setMainView("games"); setFriendPanelOpen(false); setAccountOpen(false); openChat("world"); }} type="button"><Globe2 size={20} /><span>大厅</span>{chatOverview.worldUnread > 0 && <b>{Math.min(chatOverview.worldUnread, 9)}</b>}</button>
+        <button className={friendPanelOpen || (chatOpen && chatChannel === "direct") ? "active" : ""} onClick={() => { setChatOpen(false); setAccountOpen(false); setFriendPanelOpen(true); }} type="button"><Users size={20} /><span>好友</span>{friendBadge > 0 && <b>{Math.min(friendBadge, 9)}</b>}</button>
+        <button className={accountOpen ? "active" : ""} onClick={() => { setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(true); }} type="button"><UserRound size={20} /><span>我的</span></button>
+      </nav>
+
       {chatOpen && (
         <ChatPanel
           activeGame={activeGame}
@@ -2672,35 +2679,69 @@ export default function HomePage() {
         </aside>
       </div>
       ) : (
-        <ClubLobby
-          activeGame={activeGame}
-          authUser={authUser}
-          busy={roomBusy}
-          colorPreference={colorPreference}
-          completed={completed}
-          favoriteCount={favorites.length}
-          goSize={goSize}
-          joinCode={joinCode}
-          privateClockEnabled={privateClockEnabled}
-          privateTurnSeconds={privateTurnSeconds}
-          privateForbiddenEnabled={privateForbiddenEnabled}
-          privateSpectatorPolicy={privateSpectatorPolicy}
-          onColorChange={setColorPreference}
-          onClockEnabledChange={setPrivateClockEnabled}
-          onTurnSecondsChange={setPrivateTurnSeconds}
-          onForbiddenEnabledChange={setPrivateForbiddenEnabled}
-          onSpectatorPolicyChange={setPrivateSpectatorPolicy}
-          onCreate={() => void createRoom()}
-          onGameChange={selectGame}
-          onGoSizeChange={changeGoSize}
-          onJoin={() => void joinRoom()}
-          onJoinCodeChange={setJoinCode}
-          onAI={openAiSetup}
-          onMatch={() => void startMatchmaking()}
-          onRanked={openRankedLobby}
-          onScan={openRoomScanner}
-          onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
-        />
+        <>
+          <div className="desktop-home-shell">
+            <ClubLobby
+              activeGame={activeGame}
+              authUser={authUser}
+              busy={roomBusy}
+              colorPreference={colorPreference}
+              completed={completed}
+              favoriteCount={favorites.length}
+              goSize={goSize}
+              joinCode={joinCode}
+              privateClockEnabled={privateClockEnabled}
+              privateTurnSeconds={privateTurnSeconds}
+              privateForbiddenEnabled={privateForbiddenEnabled}
+              privateSpectatorPolicy={privateSpectatorPolicy}
+              onColorChange={setColorPreference}
+              onClockEnabledChange={setPrivateClockEnabled}
+              onTurnSecondsChange={setPrivateTurnSeconds}
+              onForbiddenEnabledChange={setPrivateForbiddenEnabled}
+              onSpectatorPolicyChange={setPrivateSpectatorPolicy}
+              onCreate={() => void createRoom()}
+              onGameChange={selectGame}
+              onGoSizeChange={changeGoSize}
+              onJoin={() => void joinRoom()}
+              onJoinCodeChange={setJoinCode}
+              onAI={openAiSetup}
+              onMatch={() => void startMatchmaking()}
+              onRanked={openRankedLobby}
+              onScan={openRoomScanner}
+              onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
+            />
+          </div>
+          <MobileGameHome
+            activeGame={activeGame}
+            authUser={authUser}
+            busy={roomBusy}
+            colorPreference={colorPreference}
+            completed={completed}
+            favoriteCount={favorites.length}
+            goSize={goSize}
+            joinCode={joinCode}
+            privateClockEnabled={privateClockEnabled}
+            privateTurnSeconds={privateTurnSeconds}
+            privateForbiddenEnabled={privateForbiddenEnabled}
+            privateSpectatorPolicy={privateSpectatorPolicy}
+            onColorChange={setColorPreference}
+            onClockEnabledChange={setPrivateClockEnabled}
+            onTurnSecondsChange={setPrivateTurnSeconds}
+            onForbiddenEnabledChange={setPrivateForbiddenEnabled}
+            onSpectatorPolicyChange={setPrivateSpectatorPolicy}
+            onCreate={() => void createRoom()}
+            onGameChange={selectGame}
+            onGoSizeChange={changeGoSize}
+            onJoin={() => void joinRoom()}
+            onJoinCodeChange={setJoinCode}
+            onAI={openAiSetup}
+            onMatch={() => void startMatchmaking()}
+            onRanked={openRankedLobby}
+            onScan={openRoomScanner}
+            onStory={openStoryMode}
+            onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
+          />
+        </>
       ) : mainView === "history" ? (
         <HistoryCenter
           busy={historyBusy}
@@ -2986,7 +3027,7 @@ function ResponsiveArtwork({ alt, desktop, mobile }: { alt: string; desktop: str
   );
 }
 
-function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: {
+type ClubLobbyProps = {
   activeGame: GameId;
   authUser: AuthUser | null;
   busy: boolean;
@@ -3013,8 +3054,81 @@ function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, fav
   onMatch: () => void;
   onRanked: () => void;
   onScan: () => void;
+  onStory?: () => void;
   onlineFriends: number;
-}) {
+};
+
+function MobileGameHome({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onStory, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+  const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
+  const gameArtwork: Record<GameId, string> = {
+    go: "/micosm-go-scene.webp",
+    gomoku: "/micosm-gomoku-scene.webp",
+    reversi: "/micosm-reversi-scene.webp",
+  };
+  return (
+    <div className="mobile-game-home">
+      <section className="mobile-home-hero" aria-label="星海棋社">
+        <Image alt="星海棋社的日常棋室" fill priority sizes="100vw" src="/micosm-club-lobby-mobile.webp" unoptimized />
+        <div className="mobile-home-hero-shade" />
+        <div className="mobile-home-welcome">
+          <small>CELESTIAL CLUB</small>
+          <h1>欢迎回来，{authUser?.displayName ?? "棋手"}</h1>
+          <p>{authUser?.signature || "今天也来下一盘吧。"}</p>
+          <div><span><i />{onlineFriends} 位好友在线</span><span>{completed} 场对局</span></div>
+        </div>
+        <div className="mobile-home-profile"><UserAvatar name={authUser?.displayName ?? "M"} src={authUser?.avatarUrl} /></div>
+      </section>
+
+      <section className="mobile-game-pick" aria-labelledby="mobile-play-title">
+        <header><div><small>CHOOSE A BOARD</small><h2 id="mobile-play-title">今天下什么？</h2></div><span>{favoriteCount} 个收藏</span></header>
+        <div className="mobile-game-carousel">
+          {gameCatalog.map((game) => (
+            <button className={activeGame === game.id ? "active" : ""} key={game.id} onClick={() => onGameChange(game.id)} type="button">
+              <span><Image alt={`${game.title}棋室`} fill sizes="42vw" src={gameArtwork[game.id]} unoptimized /></span>
+              <strong>{game.title}</strong>
+              <small>{game.id === "go" ? `${goSize} 路棋盘` : game.subtitle}</small>
+              {activeGame === game.id && <i><Check size={13} /></i>}
+            </button>
+          ))}
+        </div>
+        {activeGame === "go" && <div className="mobile-size-picker" aria-label="围棋棋盘规格"><span>棋盘规格</span>{[9, 13, 19].map((size) => <button className={goSize === size ? "active" : ""} key={size} onClick={() => onGoSizeChange(size)} type="button">{size} 路</button>)}</div>}
+      </section>
+
+      <section className="mobile-play-actions" aria-label="开始对局">
+        <button className="mobile-quick-match" disabled={busy || !authUser} onClick={onMatch} type="button"><span><Search size={22} /></span><div><strong>快速匹配</strong><small>{selected.title} · 随机执色</small></div><ChevronRight size={20} /></button>
+        <div>
+          <button disabled={busy || !authUser} onClick={onAI} type="button"><Bot size={19} /><span><strong>人机对战</strong><small>四档难度</small></span></button>
+          <button className="rank" disabled={busy || !authUser || activeGame === "reversi"} onClick={onRanked} type="button"><Trophy size={19} /><span><strong>星轨排位</strong><small>{activeGame === "reversi" ? "黑白棋不参与" : "冲击新段位"}</small></span></button>
+        </div>
+      </section>
+
+      <button className="mobile-story-banner" onClick={onStory} type="button">
+        <span><Image alt="藤原澪与白石铃音" fill sizes="100vw" src="/micosm-match-table-mobile.webp" unoptimized /></span>
+        <div><small>STORY MODE</small><strong>棋社日常</strong><p>在棋局与相遇之间，继续星海棋社的故事。</p></div>
+        <BookOpen size={20} />
+      </button>
+
+      <details className="mobile-room-studio">
+        <summary><span><Users size={19} /></span><div><strong>和好友下一盘</strong><small>创建房间、扫码或输入邀请码</small></div><ChevronDown size={18} /></summary>
+        <div className="mobile-room-settings">
+          {(activeGame === "go" || activeGame === "gomoku") && <div className="mobile-setting-row"><span>房主执色</span><div>{(["black", "white", "random"] as ColorPreference[]).map((color) => <button className={colorPreference === color ? "active" : ""} key={color} onClick={() => onColorChange(color)} type="button">{color === "black" ? "黑" : color === "white" ? "白" : "随机"}</button>)}</div></div>}
+          <label className="mobile-toggle-row"><span><Clock3 size={16} /><b>每手计时</b><small>{privateClockEnabled ? `${privateTurnSeconds} 秒` : "关闭"}</small></span><input checked={privateClockEnabled} onChange={(event) => onClockEnabledChange(event.target.checked)} type="checkbox" /></label>
+          {privateClockEnabled && <label className="mobile-number-row"><span>每手时间</span><input aria-label="好友房每手用时" inputMode="numeric" max="600" min="5" onChange={(event) => onTurnSecondsChange(Math.min(600, Math.max(5, Number(event.target.value) || 5)))} step="5" type="number" value={privateTurnSeconds} /><b>秒</b></label>}
+          {activeGame === "gomoku" && <label className="mobile-toggle-row"><span><ShieldCheck size={16} /><b>禁手规则</b><small>三三、四四与长连</small></span><input checked={privateForbiddenEnabled} onChange={(event) => onForbiddenEnabledChange(event.target.checked)} type="checkbox" /></label>}
+          <div className="mobile-setting-row"><span>观战权限</span><div>{(["off", "friends", "public"] as SpectatorPolicy[]).map((policy) => <button className={privateSpectatorPolicy === policy ? "active" : ""} key={policy} onClick={() => onSpectatorPolicyChange(policy)} type="button">{policy === "off" ? "关闭" : policy === "friends" ? "好友" : "公开"}</button>)}</div></div>
+          <button className="mobile-create-room" disabled={busy || !authUser} onClick={onCreate} type="button"><Plus size={18} />创建{selected.title}房间</button>
+          <form className="mobile-join-room" onSubmit={(event) => { event.preventDefault(); onJoin(); }}>
+            <input aria-label="邀请码" autoCapitalize="characters" maxLength={6} onChange={(event) => onJoinCodeChange(event.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6))} placeholder="输入 6 位邀请码" spellCheck={false} value={joinCode} />
+            <button aria-label="扫描房间二维码" disabled={busy || !authUser} onClick={onScan} type="button"><ScanLine size={18} /></button>
+            <button aria-label="加入房间" disabled={busy || !authUser || joinCode.length !== 6} type="submit"><LogIn size={18} /></button>
+          </form>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
