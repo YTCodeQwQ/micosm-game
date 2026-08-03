@@ -70,6 +70,8 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /输入 6 位邀请码/);
   assert.match(page, /micosm-player-name/);
   assert.match(page, /micosm-room/);
+  assert.match(page, /createClientRequestId/);
+  assert.match(page, /getRandomValues/);
   assert.match(page, /navigator\.sendBeacon/);
   assert.match(page, /pagehide/);
   assert.match(page, /你获胜了/);
