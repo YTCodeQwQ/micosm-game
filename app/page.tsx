@@ -1820,13 +1820,24 @@ export default function HomePage() {
     if (connectionState === "reconnecting") return showToast("正在重新连接，请稍等");
     setActionBusy(true);
     try {
-      const response = await fetch("/api/match", {
+      const actionId = crypto.randomUUID();
+      const send = () => fetch("/api/match", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "action", roomId: room.id, playerId, action }),
+        headers: { "content-type": "application/json", "x-micosm-request-id": actionId },
+        body: JSON.stringify({ type: "action", actionId, roomId: room.id, playerId, action }),
       });
-      const data = await response.json() as { room?: RoomView; error?: { message?: string } };
-      if (!response.ok || !data.room) throw new Error(data.error?.message ?? "这一步无法执行");
+      let response: Response;
+      try {
+        response = await send();
+      } catch {
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+        response = await send();
+      }
+      const data = await response.json() as { room?: RoomView; error?: { message?: string; requestId?: string } };
+      if (!response.ok || !data.room) {
+        const suffix = data.error?.requestId ? `（错误编号 ${data.error.requestId}）` : "";
+        throw new Error(`${data.error?.message ?? "这一步无法执行"}${suffix}`);
+      }
       setRoom(data.room);
       setConnectionState("online");
       if (action.type === "play") {

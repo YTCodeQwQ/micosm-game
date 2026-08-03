@@ -3,6 +3,7 @@ import { getD1, getRoomHub } from "../../../db";
 import { avatarUrlForKey, ensureAuthSchema, getSessionUser, type AuthUser } from "../../../lib/auth";
 import { chooseBuiltInAiAction } from "../../../lib/ai-engine";
 import { ensureFriendSchema } from "../../../lib/friends";
+import { ensureMatchDiagnosticsSchema, findActionReceipt, normalizeActionId, recordMatchEvent, requestIdFor, saveActionReceipt } from "../../../lib/match-diagnostics";
 import { archiveFinishedMatch, ensureMatchHistorySchema } from "../../../lib/match-history";
 import { ensureRankSchema, rankChange } from "../../../lib/rank";
 import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchPlayer, type MatchState } from "../../../lib/match-engine";
@@ -206,6 +207,7 @@ async function ensureSchema() {
   await ensureFriendSchema(d1);
   await ensureRankSchema(d1);
   await ensureMatchHistorySchema(d1);
+  await ensureMatchDiagnosticsSchema(d1);
   return d1;
 }
 
@@ -272,10 +274,23 @@ function publicRoom(row: RoomRow, playerId: string | null) {
   };
 }
 
-function errorResponse(error: unknown) {
-  if (error instanceof MatchRuleError) return Response.json({ error: { code: error.code, message: error.message } }, { status: 409 });
+function errorResponse(error: unknown, requestId: string) {
+  const headers = { "x-micosm-request-id": requestId };
+  if (error instanceof MatchRuleError) return Response.json({ error: { code: error.code, message: error.message, requestId } }, { status: 409, headers });
   const message = error instanceof Error ? error.message : "服务器暂时无法处理请求";
-  return Response.json({ error: { code: "server_error", message } }, { status: 500 });
+  return Response.json({ error: { code: "server_error", message, requestId } }, { status: 500, headers });
+}
+
+function jsonError(code: string, message: string, status: number, requestId: string) {
+  return Response.json({ error: { code, message, requestId } }, { status, headers: { "x-micosm-request-id": requestId } });
+}
+
+async function recordRequestError(requestId: string, method: "GET" | "POST", error: unknown) {
+  try {
+    await recordMatchEvent(getD1(), { requestId, type: "request_error", details: { method, message: error instanceof Error ? error.message : String(error) } });
+  } catch {
+    // The original error response remains available even when D1 itself is unavailable.
+  }
 }
 
 async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, mode: RoomMode, turnSeconds?: number, forbiddenMoves = false) {
@@ -496,9 +511,15 @@ async function settleRankedMatch(d1: D1, row: RoomRow, state: MatchState) {
   }
 }
 
-async function settleAndArchiveMatch(d1: D1, row: RoomRow, state: MatchState) {
+async function settleAndArchiveMatch(d1: D1, row: RoomRow, state: MatchState, diagnostic?: { requestId: string; actorUserId?: string | null; actorPlayerId?: string | null }) {
   await settleRankedMatch(d1, row, state);
   await archiveFinishedMatch(d1, row, state);
+  if (state.status === "ended" && state.winner && diagnostic) {
+    await recordMatchEvent(d1, { roomId: row.id, requestId: diagnostic.requestId, type: "match_archived", actorUserId: diagnostic.actorUserId, actorPlayerId: diagnostic.actorPlayerId, roomVersion: row.version, details: { winner: state.winner } });
+    if ((row.mode ?? "private") === "ranked") {
+      await recordMatchEvent(d1, { roomId: row.id, requestId: diagnostic.requestId, type: "rank_settled", actorUserId: diagnostic.actorUserId, actorPlayerId: diagnostic.actorPlayerId, roomVersion: row.version, details: { winner: state.winner } });
+    }
+  }
 }
 
 async function publicRoomWithRank(d1: D1, row: RoomRow, playerId: string | null, userId: string) {
@@ -517,7 +538,7 @@ async function publicRoomWithRank(d1: D1, row: RoomRow, playerId: string | null,
   };
 }
 
-async function resolveMatchTimeout(d1: D1, row: RoomRow) {
+async function resolveMatchTimeout(d1: D1, row: RoomRow, requestId?: string) {
   const storedState = parseState(row);
   if (storedState.status !== "playing" || !storedState.clock) return row;
   const next = projectMatchClock(storedState);
@@ -528,12 +549,13 @@ async function resolveMatchTimeout(d1: D1, row: RoomRow) {
     return await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
   }
   const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
-  await settleAndArchiveMatch(d1, updated, next);
+  if (requestId) await recordMatchEvent(d1, { roomId: row.id, requestId, type: "match_timeout", roomVersion: updated.version, details: { winner: next.winner } });
+  await settleAndArchiveMatch(d1, updated, next, requestId ? { requestId } : undefined);
   await notifyRoom(row.id, updated.version);
   return updated;
 }
 
-async function heartbeatAndResolveDeparture(d1: D1, row: RoomRow, playerId: string | null) {
+async function heartbeatAndResolveDeparture(d1: D1, row: RoomRow, playerId: string | null, requestId?: string) {
   const role = roleFor(row, playerId);
   if (!role || !playerId) return row;
   const now = Date.now();
@@ -561,24 +583,26 @@ async function heartbeatAndResolveDeparture(d1: D1, row: RoomRow, playerId: stri
     .bind(JSON.stringify(next), now, row.id, row.version).run();
   if (!result.meta.changes) return await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
   const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
-  await settleAndArchiveMatch(d1, updated, next);
+  if (requestId) await recordMatchEvent(d1, { roomId: row.id, requestId, type: "match_departure", actorPlayerId: playerId, roomVersion: updated.version, details: { departedPlayer: opponentRole, winner: role } });
+  await settleAndArchiveMatch(d1, updated, next, requestId ? { requestId, actorPlayerId: playerId } : undefined);
   await notifyRoom(row.id, updated.version);
   return updated;
 }
 
 export async function GET(request: Request) {
+  const requestId = requestIdFor(request);
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get("roomId")?.trim().toUpperCase();
-    if (!id) return Response.json({ error: { code: "missing_room", message: "请输入邀请码" } }, { status: 400 });
+    if (!id) return jsonError("missing_room", "请输入邀请码", 400, requestId);
     const d1 = await ensureSchema();
     const sessionUser = await getSessionUser(request, d1);
-    if (!sessionUser) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
+    if (!sessionUser) return jsonError("auth_required", "请先登录", 401, requestId);
     let row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
-    if (!row) return Response.json({ error: { code: "room_not_found", message: "没有找到这个对局" } }, { status: 404 });
+    if (!row) return jsonError("room_not_found", "没有找到这个对局", 404, requestId);
     const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
-    row = await resolveMatchTimeout(d1, row);
-    row = await heartbeatAndResolveDeparture(d1, row, authenticatedPlayerId);
+    row = await resolveMatchTimeout(d1, row, requestId);
+    row = await heartbeatAndResolveDeparture(d1, row, authenticatedPlayerId, requestId);
     if (["matchmaking", "ranked"].includes(row.mode ?? "private") && !row.white_player && authenticatedPlayerId === row.black_player && row.updated_at < Date.now() - 5000) {
       const now = Date.now();
       await d1.prepare("UPDATE game_rooms SET updated_at = ? WHERE id = ? AND white_player IS NULL").bind(now, id).run();
@@ -586,37 +610,40 @@ export async function GET(request: Request) {
     }
     return Response.json({ room: await publicRoomWithRank(d1, row, authenticatedPlayerId, sessionUser.id) });
   } catch (error) {
-    return errorResponse(error);
+    await recordRequestError(requestId, "GET", error);
+    return errorResponse(error, requestId);
   }
 }
 
 export async function POST(request: Request) {
+  const requestId = requestIdFor(request);
   try {
-    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; turnSeconds?: number; clockMinutes?: number; forbiddenMoves?: boolean; roomId?: string; playerId?: string; action?: MatchAction };
+    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; turnSeconds?: number; clockMinutes?: number; forbiddenMoves?: boolean; roomId?: string; playerId?: string; actionId?: string; action?: MatchAction };
     const d1 = await ensureSchema();
     const sessionUser = await getSessionUser(request, d1);
-    if (!sessionUser) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
+    if (!sessionUser) return jsonError("auth_required", "请先登录", 401, requestId);
 
     if (payload.type === "createAI") {
-      if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return Response.json({ error: { code: "invalid_game", message: "当前游戏暂不支持人机对战" } }, { status: 400 });
+      if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return jsonError("invalid_game", "当前游戏暂不支持人机对战", 400, requestId);
       const difficulty = AI_DIFFICULTIES.includes(payload.aiDifficulty ?? "normal") ? payload.aiDifficulty ?? "normal" : "normal";
       const preference: ColorPreference = ["black", "white", "random"].includes(payload.colorPreference ?? "black") ? payload.colorPreference ?? "black" : "black";
       if (payload.game === "go" && difficulty === "master" && !(await ensureKataGoReady())) {
-        return Response.json({ error: { code: "katago_unavailable", message: "最高难度需要先启动本机 KataGo GPU 服务" } }, { status: 503 });
+        return jsonError("katago_unavailable", "最高难度需要先启动本机 KataGo GPU 服务", 503, requestId);
       }
       if (payload.game === "gomoku" && difficulty === "master" && !(await ensureRapfiReady())) {
-        return Response.json({ error: { code: "rapfi_unavailable", message: "最高难度需要先启动本机 Rapfi NNUE 服务" } }, { status: 503 });
+        return jsonError("rapfi_unavailable", "最高难度需要先启动本机 Rapfi NNUE 服务", 503, requestId);
       }
       const created = await createAiRoom(d1, payload.game, normalizedSize(payload.game, payload.size), preference, sessionUser, difficulty, payload.forbiddenMoves === true);
+      await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game: payload.game, mode: "ai", difficulty } });
       return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
     }
 
     if (payload.type === "rankmake") {
-      if (!payload.game || !["go", "gomoku"].includes(payload.game)) return Response.json({ error: { code: "ranked_game_unavailable", message: "当前游戏不参与排位" } }, { status: 400 });
+      if (!payload.game || !["go", "gomoku"].includes(payload.game)) return jsonError("ranked_game_unavailable", "当前游戏不参与排位", 400, requestId);
       const game = payload.game as "go" | "gomoku";
       const size = game === "go" ? 19 : 15;
       const activeMatch = await d1.prepare("SELECT room_id FROM rank_matches WHERE status IN ('active', 'settling') AND (black_user_id = ? OR white_user_id = ?) LIMIT 1").bind(sessionUser.id, sessionUser.id).first<{ room_id: string }>();
-      if (activeMatch) return Response.json({ error: { code: "ranked_match_active", message: "你已经有一场进行中的排位对局" } }, { status: 409 });
+      if (activeMatch) return jsonError("ranked_match_active", "你已经有一场进行中的排位对局", 409, requestId);
       const existing = await d1.prepare("SELECT q.user_id AS queue_user_id, q.rating AS queue_rating, q.created_at AS queue_created_at, q.player_id AS queue_player_id, q.updated_at AS queue_updated_at, r.* FROM ranked_queue q JOIN game_rooms r ON r.id = q.room_id WHERE q.user_id = ?")
         .bind(sessionUser.id).first<RankedQueueRow>();
       if (existing && existing.queue_updated_at >= Date.now() - 20_000) return Response.json({ room: await publicRoomWithRank(d1, existing, existing.queue_player_id, sessionUser.id), playerId: existing.queue_player_id });
@@ -643,26 +670,29 @@ export async function POST(request: Request) {
         if (!joined) continue;
         await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ? AND room_id = ?").bind(queued.queue_user_id, queued.id).run();
         await createRankMatch(d1, queued, joined.row, sessionUser, joined.hostIsBlack);
+        await recordMatchEvent(d1, { roomId: joined.row.id, requestId, type: "room_joined", actorUserId: sessionUser.id, actorPlayerId: joined.playerId, roomVersion: joined.row.version, details: { game, mode: "ranked" } });
         return Response.json({ room: await publicRoomWithRank(d1, joined.row, joined.playerId, sessionUser.id), playerId: joined.playerId });
       }
 
       const created = await createWaitingRoom(d1, game, size, "random", sessionUser, "ranked");
       await d1.prepare("INSERT INTO ranked_queue (user_id, room_id, player_id, game, board_size, rating, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(sessionUser.id, created.row.id, created.playerId, game, size, profile.rating, now, now).run();
+      await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game, mode: "ranked" } });
       return Response.json({ room: await publicRoomWithRank(d1, created.row, created.playerId, sessionUser.id), playerId: created.playerId }, { status: 201 });
     }
 
     if (payload.type === "create" || payload.type === "matchmake") {
-      if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return Response.json({ error: { code: "invalid_game", message: "当前游戏不支持双人对局" } }, { status: 400 });
+      if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return jsonError("invalid_game", "当前游戏不支持双人对局", 400, requestId);
       const size = normalizedSize(payload.game, payload.size);
 
       if (payload.type === "create") {
         const colorPreference: ColorPreference = payload.game === "reversi" ? "black" : ["black", "white", "random"].includes(payload.colorPreference ?? "black") ? payload.colorPreference ?? "black" : "black";
         const turnSeconds = payload.turnSeconds ?? (payload.clockMinutes ? payload.clockMinutes * 60 : undefined);
         if (turnSeconds !== undefined && (!Number.isInteger(turnSeconds) || turnSeconds < 5 || turnSeconds > 600)) {
-          return Response.json({ error: { code: "invalid_clock", message: "每手用时需要设置为 5 至 600 秒" } }, { status: 400 });
+          return jsonError("invalid_clock", "每手用时需要设置为 5 至 600 秒", 400, requestId);
         }
         const created = await createWaitingRoom(d1, payload.game, size, colorPreference, sessionUser, "private", turnSeconds, payload.forbiddenMoves === true);
+        await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game: payload.game, mode: "private", turnSeconds: turnSeconds ?? null } });
         return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
       }
 
@@ -680,48 +710,55 @@ export async function POST(request: Request) {
           }
           const joined = await claimWaitingRoom(d1, queued, sessionUser);
           await d1.prepare("DELETE FROM matchmaking_queue WHERE queue_key = ? AND room_id = ?").bind(queueKey, queued.id).run();
-          if (joined) return Response.json({ room: publicRoom(joined.row, joined.playerId), playerId: joined.playerId });
+          if (joined) {
+            await recordMatchEvent(d1, { roomId: joined.row.id, requestId, type: "room_joined", actorUserId: sessionUser.id, actorPlayerId: joined.playerId, roomVersion: joined.row.version, details: { game: payload.game, mode: "matchmaking" } });
+            return Response.json({ room: publicRoom(joined.row, joined.playerId), playerId: joined.playerId });
+          }
           continue;
         }
 
         const created = await createWaitingRoom(d1, payload.game, size, "random", sessionUser, "matchmaking");
         const queuedResult = await d1.prepare("INSERT OR IGNORE INTO matchmaking_queue (queue_key, room_id, created_at) VALUES (?, ?, ?)").bind(queueKey, created.row.id, Date.now()).run();
-        if (queuedResult.meta.changes) return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
+        if (queuedResult.meta.changes) {
+          await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game: payload.game, mode: "matchmaking" } });
+          return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
+        }
         await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(created.row.id).run();
       }
-      return Response.json({ error: { code: "matchmaking_busy", message: "匹配队列正在更新，请再试一次" } }, { status: 409 });
+      return jsonError("matchmaking_busy", "匹配队列正在更新，请再试一次", 409, requestId);
     }
 
     const id = payload.roomId?.trim().toUpperCase();
-    if (!id) return Response.json({ error: { code: "missing_room", message: "请输入邀请码" } }, { status: 400 });
+    if (!id) return jsonError("missing_room", "请输入邀请码", 400, requestId);
     let row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
-    if (!row) return Response.json({ error: { code: "room_not_found", message: "没有找到这个对局" } }, { status: 404 });
+    if (!row) return jsonError("room_not_found", "没有找到这个对局", 404, requestId);
 
     if (payload.type === "join") {
-      if (row.host_user_id === sessionUser.id) return Response.json({ error: { code: "cannot_join_own_room", message: "不能加入自己创建的房间，请使用另一个账号测试" } }, { status: 409 });
-      if ((row.mode ?? "private") !== "private") return Response.json({ error: { code: "not_private_room", message: "这个对局不能通过邀请码加入" } }, { status: 409 });
-      if (row.white_player) return Response.json({ error: { code: "room_full", message: "这个房间已经满员" } }, { status: 409 });
+      if (row.host_user_id === sessionUser.id) return jsonError("cannot_join_own_room", "不能加入自己创建的房间，请使用另一个账号测试", 409, requestId);
+      if ((row.mode ?? "private") !== "private") return jsonError("not_private_room", "这个对局不能通过邀请码加入", 409, requestId);
+      if (row.white_player) return jsonError("room_full", "这个房间已经满员", 409, requestId);
       const joined = await claimWaitingRoom(d1, row, sessionUser);
-      if (!joined) return Response.json({ error: { code: "room_full", message: "这个房间刚刚被其他玩家加入" } }, { status: 409 });
+      if (!joined) return jsonError("room_full", "这个房间刚刚被其他玩家加入", 409, requestId);
       const now = Date.now();
       await d1.prepare("UPDATE game_invites SET status = CASE WHEN invitee_id = ? THEN 'accepted' ELSE 'cancelled' END, updated_at = ? WHERE room_id = ? AND status = 'pending'")
         .bind(sessionUser.id, now, id).run();
+      await recordMatchEvent(d1, { roomId: id, requestId, type: "room_joined", actorUserId: sessionUser.id, actorPlayerId: joined.playerId, roomVersion: joined.row.version, details: { game: joined.row.game, mode: "private" } });
       return Response.json({ room: publicRoom(joined.row, joined.playerId), playerId: joined.playerId });
     }
 
-    row = await resolveMatchTimeout(d1, row);
+    row = await resolveMatchTimeout(d1, row, requestId);
 
     if (payload.type === "cancelMatchmaking") {
       const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
       const playerRole = roleFor(row, authenticatedPlayerId);
       const ownsWaitingRoom = !row.white_player && row.black_player === authenticatedPlayerId;
       if ((row.mode ?? "private") === "ranked") {
-        if (!ownsWaitingRoom || !row.host_user_id || row.host_user_id !== sessionUser.id) return Response.json({ error: { code: "cannot_cancel", message: "无法取消这个排位匹配" } }, { status: 403 });
+        if (!ownsWaitingRoom || !row.host_user_id || row.host_user_id !== sessionUser.id) return jsonError("cannot_cancel", "无法取消这个排位匹配", 403, requestId);
         await d1.prepare("DELETE FROM ranked_queue WHERE room_id = ? AND user_id = ?").bind(id, sessionUser.id).run();
         await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(id).run();
         return Response.json({ cancelled: true });
       }
-      if ((row.mode ?? "private") !== "matchmaking" || (!playerRole && !ownsWaitingRoom)) return Response.json({ error: { code: "cannot_cancel", message: "无法取消这个匹配" } }, { status: 403 });
+      if ((row.mode ?? "private") !== "matchmaking" || (!playerRole && !ownsWaitingRoom)) return jsonError("cannot_cancel", "无法取消这个匹配", 403, requestId);
       if (row.white_player) return Response.json({ room: publicRoom(row, authenticatedPlayerId), cancelled: false });
       await d1.prepare("DELETE FROM matchmaking_queue WHERE room_id = ?").bind(id).run();
       const result = await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND black_player = ? AND white_player IS NULL").bind(id, authenticatedPlayerId).run();
@@ -733,7 +770,7 @@ export async function POST(request: Request) {
     if (payload.type === "leave") {
       const playerId = playerIdForUser(row, sessionUser.id) ?? "";
       if ((row.mode ?? "private") === "ai") {
-        if (!playerId) return Response.json({ error: { code: "not_a_player", message: "你不是这个人机对局的玩家" } }, { status: 403 });
+        if (!playerId) return jsonError("not_a_player", "你不是这个人机对局的玩家", 403, requestId);
         const role = roleFor(row, playerId);
         const current = parseState(row);
         if (role && ["playing", "scoring"].includes(current.status)) {
@@ -741,11 +778,13 @@ export async function POST(request: Request) {
           const now = Date.now();
           await archiveFinishedMatch(d1, { ...row, version: row.version + 1, updated_at: now }, next);
         }
+        await recordMatchEvent(d1, { roomId: id, requestId, type: "room_left", actorUserId: sessionUser.id, actorPlayerId: playerId, roomVersion: row.version, details: { mode: "ai" } });
         await d1.prepare("DELETE FROM game_room_presence WHERE room_id = ?").bind(id).run();
         await d1.prepare("DELETE FROM game_rooms WHERE id = ?").bind(id).run();
         return Response.json({ left: true });
       }
       if (!row.white_player && row.black_player === playerId) {
+        await recordMatchEvent(d1, { roomId: id, requestId, type: "room_closed", actorUserId: sessionUser.id, actorPlayerId: playerId, roomVersion: row.version, details: { reason: "host_left_waiting_room" } });
         await notifyRoom(id, row.version, "room_closed");
         await d1.prepare("DELETE FROM matchmaking_queue WHERE room_id = ?").bind(id).run();
         await d1.prepare("DELETE FROM ranked_queue WHERE room_id = ?").bind(id).run();
@@ -754,58 +793,86 @@ export async function POST(request: Request) {
         return Response.json({ left: true });
       }
       const role = roleFor(row, playerId);
-      if (!role) return Response.json({ error: { code: "not_a_player", message: "你不是这个对局的玩家" } }, { status: 403 });
+      if (!role) return jsonError("not_a_player", "你不是这个对局的玩家", 403, requestId);
       const state = parseState(row);
       if (state.status === "ended") return Response.json({ left: true });
       const winner: MatchPlayer = role === "black" ? "white" : "black";
       const next: MatchState = { ...state, status: "ended", winner, departedPlayer: role, undoRequest: null, notice: `${role === "black" ? "黑方" : "白方"}逃跑，${winner === "black" ? "黑方" : "白方"}获胜` };
       const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?").bind(JSON.stringify(next), Date.now(), id, row.version).run();
-      if (!result.meta.changes) return Response.json({ error: { code: "version_conflict", message: "房间状态刚刚更新，请重试" } }, { status: 409 });
+      if (!result.meta.changes) return jsonError("version_conflict", "房间状态刚刚更新，请重试", 409, requestId);
       const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>() as RoomRow;
-      await settleAndArchiveMatch(d1, updated, next);
+      await recordMatchEvent(d1, { roomId: id, requestId, type: "room_left", actorUserId: sessionUser.id, actorPlayerId: playerId, roomVersion: updated.version, details: { reason: "departure", winner } });
+      await settleAndArchiveMatch(d1, updated, next, { requestId, actorUserId: sessionUser.id, actorPlayerId: playerId });
       await notifyRoom(id, updated.version);
       return Response.json({ left: true });
     }
 
     if (payload.type === "aiMove") {
-      if ((row.mode ?? "private") !== "ai") return Response.json({ error: { code: "not_ai_room", message: "当前不是人机对局" } }, { status: 409 });
+      if ((row.mode ?? "private") !== "ai") return jsonError("not_ai_room", "当前不是人机对局", 409, requestId);
       const playerId = playerIdForUser(row, sessionUser.id) ?? "";
-      if (!playerId || !roleFor(row, playerId)) return Response.json({ error: { code: "not_a_player", message: "你不是这个人机对局的玩家" } }, { status: 403 });
+      if (!playerId || !roleFor(row, playerId)) return jsonError("not_a_player", "你不是这个人机对局的玩家", 403, requestId);
       const current = parseState(row);
       const next = await advanceAi(current);
       if (next === current) return Response.json({ room: publicRoom(row, playerId) });
       const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?").bind(JSON.stringify(next), Date.now(), id, row.version).run();
-      if (!result.meta.changes) return Response.json({ error: { code: "version_conflict", message: "棋局刚刚更新，AI 将重新计算" } }, { status: 409 });
+      if (!result.meta.changes) return jsonError("version_conflict", "棋局刚刚更新，AI 将重新计算", 409, requestId);
       const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>() as RoomRow;
-      await settleAndArchiveMatch(d1, updated, next);
+      await settleAndArchiveMatch(d1, updated, next, { requestId, actorUserId: sessionUser.id, actorPlayerId: playerId });
       return Response.json({ room: publicRoom(updated, playerId) });
     }
 
     if (payload.type === "action") {
       const playerId = playerIdForUser(row, sessionUser.id) ?? "";
       const role = roleFor(row, playerId);
-      if (!role) return Response.json({ error: { code: "not_a_player", message: "你不是这个对局的玩家" } }, { status: 403 });
-      if (!row.white_player) return Response.json({ error: { code: "waiting_for_opponent", message: "等待另一位玩家加入" } }, { status: 409 });
-      if (!payload.action) return Response.json({ error: { code: "missing_action", message: "缺少棋局操作" } }, { status: 400 });
-      if ((row.mode ?? "private") === "ranked" && !["play", "pass", "markDead", "confirmScore", "resumeGo", "resign"].includes(payload.action.type)) return Response.json({ error: { code: "ranked_action_forbidden", message: "排位对局不能悔棋或重开" } }, { status: 409 });
+      if (!role) return jsonError("not_a_player", "你不是这个对局的玩家", 403, requestId);
+      if (!row.white_player) return jsonError("waiting_for_opponent", "等待另一位玩家加入", 409, requestId);
+      if (!payload.action) return jsonError("missing_action", "缺少棋局操作", 400, requestId);
+      if ((row.mode ?? "private") === "ranked" && !["play", "pass", "markDead", "confirmScore", "resumeGo", "resign"].includes(payload.action.type)) return jsonError("ranked_action_forbidden", "排位对局不能悔棋或重开", 409, requestId);
+      const actionId = normalizeActionId(payload.actionId);
+      if (actionId) {
+        const receipt = await findActionReceipt(d1, actionId, id, sessionUser.id);
+        if (receipt) {
+          if (!receipt.matchesRequest) return jsonError("action_id_conflict", "操作编号已经被使用，请重试", 409, requestId);
+          const current = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+          if (!current) return jsonError("room_not_found", "没有找到这个对局", 404, requestId);
+          return Response.json({ room: await publicRoomWithRank(d1, current, playerId, sessionUser.id), duplicate: true });
+        }
+      }
       const storedState = parseState(row);
       const currentState = storedState.clock ? projectMatchClock(storedState) : storedState;
       let next: MatchState;
       if ((row.mode ?? "private") === "ai" && payload.action.type === "requestUndo") next = undoAiRound(currentState);
       else if ((row.mode ?? "private") === "ai" && ["requestRematch", "reset"].includes(payload.action.type)) next = resetAiState(currentState);
       else if ((row.mode ?? "private") === "ai" && ["cancelUndo", "respondUndo", "cancelRematch", "respondRematch"].includes(payload.action.type)) {
-        return Response.json({ error: { code: "ai_action_unavailable", message: "人机对局不需要等待对手确认" } }, { status: 409 });
+        return jsonError("ai_action_unavailable", "人机对局不需要等待对手确认", 409, requestId);
       } else next = applyMatchAction(currentState, role, payload.action);
       const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?").bind(JSON.stringify(next), Date.now(), id, row.version).run();
-      if (!result.meta.changes) return Response.json({ error: { code: "version_conflict", message: "棋局刚刚更新，请重试这一步" } }, { status: 409 });
+      if (!result.meta.changes) return jsonError("version_conflict", "棋局刚刚更新，请重试这一步", 409, requestId);
       const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
-      await settleAndArchiveMatch(d1, updated as RoomRow, next);
+      if (actionId && updated) {
+        try {
+          await saveActionReceipt(d1, actionId, id, sessionUser.id, updated.version);
+        } catch (error) {
+          await recordMatchEvent(d1, { roomId: id, requestId, type: "request_error", actorUserId: sessionUser.id, actorPlayerId: playerId, roomVersion: updated.version, details: { stage: "save_action_receipt", message: error instanceof Error ? error.message : String(error) } });
+        }
+      }
+      await recordMatchEvent(d1, {
+        roomId: id,
+        requestId,
+        type: "match_action",
+        actorUserId: sessionUser.id,
+        actorPlayerId: playerId,
+        roomVersion: updated?.version,
+        details: { action: payload.action.type, actionId },
+      });
+      await settleAndArchiveMatch(d1, updated as RoomRow, next, { requestId, actorUserId: sessionUser.id, actorPlayerId: playerId });
       await notifyRoom(id, updated?.version);
       return Response.json({ room: await publicRoomWithRank(d1, updated as RoomRow, playerId, sessionUser.id) });
     }
 
-    return Response.json({ error: { code: "invalid_request", message: "无法识别这个请求" } }, { status: 400 });
+    return jsonError("invalid_request", "无法识别这个请求", 400, requestId);
   } catch (error) {
-    return errorResponse(error);
+    await recordRequestError(requestId, "POST", error);
+    return errorResponse(error, requestId);
   }
 }
