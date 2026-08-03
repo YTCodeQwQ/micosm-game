@@ -3474,10 +3474,41 @@ function ChatPanel({ activeGame, busy, channel, currentUserId, endRef, friends, 
 }) {
   const gameTitle = gameCatalog.find((game) => game.id === activeGame)?.title ?? "棋类对局";
   const directUnread = Object.values(overview.directUnreads).reduce((sum, count) => sum + count, 0);
-  const showConversation = channel === "world" || Boolean(peer);
+  const sortedFriends = [...friends].sort((first, second) => Number(second.online) - Number(first.online) || first.displayName.localeCompare(second.displayName, "zh-CN"));
+  const messageList = (
+    <div className="chat-messages" aria-live="polite">
+      {messages.length === 0 ? <div className="chat-empty"><MessageCircle size={21} /><span>{channel === "world" ? "成为第一个发言的人" : "发一条消息开始聊天"}</span></div> : messages.map((message) => (
+        <article className={`chat-message ${message.isMine ? "mine" : ""}`} key={message.id}>
+          {!message.isMine && <span className="chat-message-avatar"><UserAvatar name={message.sender.displayName} src={message.sender.avatarUrl} /></span>}
+          <div className="chat-message-content">
+            <header><strong>{message.isMine ? "我" : message.sender.displayName}</strong><time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></header>
+            {message.body && <p>{message.body}</p>}
+            {message.room && (
+              <button className="chat-room-invite" disabled={!message.room.open || message.sender.id === currentUserId} onClick={() => onJoin(message)} type="button">
+                <span><Gamepad2 size={19} /></span>
+                <span><strong>{gameCatalog.find((game) => game.id === message.room?.game)?.title ?? "棋类对局"}</strong><small>{message.sender.id === currentUserId ? "等待其他玩家加入" : message.room.open ? "房间开放中" : "房间已结束"}</small></span>
+                <i>{message.sender.id === currentUserId ? "等待" : message.room.open ? "加入" : "已满"}</i>
+              </button>
+            )}
+            <div className="chat-message-actions">
+              {message.isMine ? <button aria-label="删除消息" onClick={() => onDelete(message.id)} title="删除消息" type="button"><Trash2 size={13} /></button> : channel === "world" && <button aria-label="举报消息" onClick={() => onReport(message.id)} title="举报消息" type="button"><Flag size={13} /></button>}
+            </div>
+          </div>
+        </article>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+  const composer = (
+    <form className="chat-composer" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
+      <button aria-label={`发送${gameTitle}房间邀请`} disabled={busy} onClick={onInvite} title={`发送${gameTitle}房间邀请`} type="button"><Gamepad2 size={18} /></button>
+      <textarea aria-label="聊天消息" maxLength={200} onChange={(event) => onTextChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSend(); } }} placeholder={channel === "world" ? "和大家说点什么" : `发送给 ${peer?.displayName ?? "好友"}`} rows={1} value={text} />
+      <button aria-label="发送消息" className="send" disabled={busy || !text.trim()} title="发送消息" type="submit">{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button>
+    </form>
+  );
   return (
-    <aside aria-label="消息中心" className={`chat-panel ${channel === "world" ? "world-lobby-panel" : ""}`}>
-      <header><div><small>{channel === "world" ? "WORLD LOBBY" : "MESSAGES"}</small><h2>{channel === "world" ? hall === "main" ? "世界主大厅" : `${historyGameName(hall)}大厅` : peer?.displayName ?? "好友聊天"}</h2></div><button aria-label="关闭聊天" onClick={onClose} type="button"><X size={18} /></button></header>
+    <aside aria-label="消息中心" className={`chat-panel ${channel === "world" ? "world-lobby-panel" : "direct-chat-panel"}`}>
+      <header><div><small>{channel === "world" ? "WORLD LOBBY" : "MESSAGES"}</small><h2>{channel === "world" ? hall === "main" ? "世界主大厅" : `${historyGameName(hall)}大厅` : "好友私聊"}</h2></div><button aria-label="关闭聊天" onClick={onClose} type="button"><X size={18} /></button></header>
       <div className="chat-tabs" aria-label="聊天频道">
         <button className={channel === "world" ? "active" : ""} onClick={() => onChannelChange("world")} type="button"><Globe2 size={15} />世界{overview.worldUnread > 0 && <span>{Math.min(overview.worldUnread, 99)}</span>}</button>
         <button className={channel === "direct" ? "active" : ""} onClick={() => onChannelChange("direct")} type="button"><MessageCircle size={15} />私聊{directUnread > 0 && <span>{Math.min(directUnread, 99)}</span>}</button>
@@ -3493,50 +3524,28 @@ function ChatPanel({ activeGame, busy, channel, currentUserId, endRef, friends, 
           {lobbyRooms.length === 0 ? <div className="lobby-room-empty"><Waypoints size={26} /><strong>暂时没有公开棋局</strong><p>创建好友房并开启观战后，会出现在这里。</p></div> : lobbyRooms.map((targetRoom) => <LobbyRoomCard key={targetRoom.id} onOpen={() => onLobbyRoom(targetRoom)} room={targetRoom} />)}
         </div>
       </section>}
-      {channel === "direct" && peer && <button className="chat-peer-bar" onClick={() => onPeerChange(null)} type="button"><span className="chat-peer-avatar"><UserAvatar name={peer.displayName} src={peer.avatarUrl} /></span><span><strong>{peer.displayName}</strong><small>{peer.online ? "在线" : "离线"}</small></span><X size={15} /></button>}
+      {channel === "world" && messageList}
+      {channel === "world" && composer}
 
-      {channel === "direct" && !peer ? (
+      {channel === "direct" && <section className={`direct-friend-pane ${peer ? "has-selection" : ""}`} aria-label="私聊好友">
+        <header><div><small>CONTACTS</small><strong>好友</strong></div><span>{friends.filter((friend) => friend.online).length} 人在线</span></header>
         <div className="chat-friend-list">
-          <span className="friend-section-label">选择好友</span>
-          {friends.length === 0 ? <FriendEmpty text="添加好友后即可私聊" /> : [...friends].sort((first, second) => Number(second.online) - Number(first.online)).map((friend) => (
-            <button key={friend.id} onClick={() => onPeerChange(friend)} type="button">
+          {friends.length === 0 ? <FriendEmpty text="添加好友后即可私聊" /> : sortedFriends.map((friend) => (
+            <button className={peer?.id === friend.id ? "active" : ""} key={friend.id} onClick={() => onPeerChange(friend)} type="button">
               <FriendIdentity person={friend} />
               {(overview.directUnreads[friend.id] ?? 0) > 0 && <span>{Math.min(overview.directUnreads[friend.id], 99)}</span>}
             </button>
           ))}
         </div>
-      ) : (
-        <div className="chat-messages" aria-live="polite">
-          {messages.length === 0 ? <div className="chat-empty"><MessageCircle size={21} /><span>{channel === "world" ? "成为第一个发言的人" : "发一条消息开始聊天"}</span></div> : messages.map((message) => (
-            <article className={`chat-message ${message.isMine ? "mine" : ""}`} key={message.id}>
-              {!message.isMine && <span className="chat-message-avatar"><UserAvatar name={message.sender.displayName} src={message.sender.avatarUrl} /></span>}
-              <div className="chat-message-content">
-                <header><strong>{message.isMine ? "我" : message.sender.displayName}</strong><time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></header>
-                {message.body && <p>{message.body}</p>}
-                {message.room && (
-                  <button className="chat-room-invite" disabled={!message.room.open || message.sender.id === currentUserId} onClick={() => onJoin(message)} type="button">
-                    <span><Gamepad2 size={19} /></span>
-                    <span><strong>{gameCatalog.find((game) => game.id === message.room?.game)?.title ?? "棋类对局"}</strong><small>{message.sender.id === currentUserId ? "等待其他玩家加入" : message.room.open ? "房间开放中" : "房间已结束"}</small></span>
-                    <i>{message.sender.id === currentUserId ? "等待" : message.room.open ? "加入" : "已满"}</i>
-                  </button>
-                )}
-                <div className="chat-message-actions">
-                  {message.isMine ? <button aria-label="删除消息" onClick={() => onDelete(message.id)} title="删除消息" type="button"><Trash2 size={13} /></button> : channel === "world" && <button aria-label="举报消息" onClick={() => onReport(message.id)} title="举报消息" type="button"><Flag size={13} /></button>}
-                </div>
-              </div>
-            </article>
-          ))}
-          <div ref={endRef} />
-        </div>
-      )}
+      </section>}
 
-      {showConversation && (
-        <form className="chat-composer" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
-          <button aria-label={`发送${gameTitle}房间邀请`} disabled={busy} onClick={onInvite} title={`发送${gameTitle}房间邀请`} type="button"><Gamepad2 size={18} /></button>
-          <textarea aria-label="聊天消息" maxLength={200} onChange={(event) => onTextChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSend(); } }} placeholder={channel === "world" ? "和大家说点什么" : `发送给 ${peer?.displayName ?? "好友"}`} rows={1} value={text} />
-          <button aria-label="发送消息" className="send" disabled={busy || !text.trim()} title="发送消息" type="submit">{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button>
-        </form>
-      )}
+      {channel === "direct" && <section className={`direct-conversation ${peer ? "has-peer" : ""}`} aria-label="好友对话">
+        {peer ? <>
+          <button className="chat-peer-bar" onClick={() => onPeerChange(null)} type="button"><ChevronLeft size={16} /><span className="chat-peer-avatar"><UserAvatar name={peer.displayName} src={peer.avatarUrl} /></span><span><strong>{peer.displayName}</strong><small>{peer.signature || (peer.online ? "在线" : "离线")}</small></span><i className={peer.online ? "online" : ""}>{peer.online ? "在线" : "离线"}</i></button>
+          {messageList}
+          {composer}
+        </> : <div className="direct-chat-empty"><span><MessageCircle size={28} /></span><strong>选择一位好友</strong><p>查看聊天记录，或直接发送房间邀请。</p></div>}
+      </section>}
     </aside>
   );
 }

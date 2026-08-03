@@ -107,7 +107,10 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /接受邀请/);
   assert.match(page, /inviteFriend/);
   assert.match(page, /世界频道/);
-  assert.match(page, /好友聊天/);
+  assert.match(page, /好友私聊/);
+  assert.match(page, /direct-chat-panel/);
+  assert.match(page, /direct-friend-pane/);
+  assert.match(page, /direct-conversation/);
   assert.match(page, /发送消息/);
   assert.match(page, /sendChatRoomInvite/);
   assert.match(page, /chat-room-invite/);

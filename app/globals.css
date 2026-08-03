@@ -518,6 +518,30 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .world-lobby-panel > .world-channel-note { grid-column: 1; grid-row: 4; }
 .world-lobby-panel > .chat-messages { grid-column: 1; grid-row: 5; }
 .world-lobby-panel > .chat-composer { grid-column: 1; grid-row: 6; }
+.chat-panel.direct-chat-panel { display: grid; right: 20px; width: min(1040px,calc(100vw - 40px)); height: min(780px,calc(100dvh - 92px)); grid-template-columns: minmax(250px,.38fr) minmax(420px,1fr); grid-template-rows: auto auto minmax(0,1fr); column-gap: 14px; }
+.direct-chat-panel > header, .direct-chat-panel > .chat-tabs { grid-column: 1 / -1; }
+.direct-chat-panel > header { grid-row: 1; }
+.direct-chat-panel > .chat-tabs { grid-row: 2; }
+.direct-friend-pane { display: flex; min-width: 0; min-height: 0; grid-column: 1; grid-row: 3; flex-direction: column; margin-top: 12px; padding: 10px 14px 0 0; border-right: 1px solid rgba(98,112,128,.12); }
+.direct-friend-pane > header { display: flex; min-height: 42px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 6px 9px; }
+.direct-friend-pane > header small, .direct-friend-pane > header strong { display: block; }
+.direct-friend-pane > header small { color: #9aa0a8; font-size: 8px; font-weight: 760; }
+.direct-friend-pane > header strong { margin-top: 3px; color: #303941; font-size: 14px; }
+.direct-friend-pane > header > span { color: #74818e; font-size: 9px; }
+.direct-friend-pane .chat-friend-list { margin-top: 0; overscroll-behavior: contain; }
+.direct-friend-pane .chat-friend-list > button { min-height: 66px; padding: 8px; border: 1px solid transparent; }
+.direct-friend-pane .chat-friend-list > button.active { border-color: rgba(66,111,150,.16); background: #e4edf5; }
+.direct-conversation { display: flex; min-width: 0; min-height: 0; grid-column: 2; grid-row: 3; flex-direction: column; padding: 10px 0 0 0; }
+.direct-conversation .chat-peer-bar { grid-template-columns: 18px 42px minmax(0,1fr) auto; margin: 0; padding: 7px 9px 10px; cursor: default; }
+.direct-conversation .chat-peer-bar > svg { color: #8492a0; }
+.direct-conversation .chat-peer-avatar { width: 42px; height: 42px; }
+.direct-conversation .chat-peer-bar i { padding: 4px 7px; border-radius: 8px; background: #edf0f3; color: #89939d; font-size: 8px; font-style: normal; }
+.direct-conversation .chat-peer-bar i.online { background: #e1f0e9; color: #3e7d64; }
+.direct-conversation .chat-messages { padding-right: 8px; padding-left: 8px; }
+.direct-chat-empty { display: flex; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #8d9aa6; text-align: center; }
+.direct-chat-empty > span { display: grid; width: 64px; height: 64px; place-items: center; border-radius: 18px; background: #e2ebf3; color: #52738e; }
+.direct-chat-empty strong { margin-top: 4px; color: #445c70; font-size: 14px; }
+.direct-chat-empty p { margin: 0; font-size: 10px; }
 .lobby-room-browser { display: flex; min-width: 0; min-height: 0; grid-column: 2; grid-row: 4 / 7; flex-direction: column; padding: 10px 0 0 14px; border-left: 1px solid rgba(98,112,128,.12); }
 .lobby-room-browser > header { display: flex; min-height: 42px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 0 4px 9px; }
 .lobby-room-browser > header small, .lobby-room-browser > header strong { display: block; }
@@ -1984,6 +2008,18 @@ body[data-theme="dark"] {
   .lobby-spectator-row { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 8px; }
   .lobby-spectator-row > span { min-width: 0; }
   .lobby-spectator-row button { min-height: 34px; font-size: 10px; }
+  .chat-panel.direct-chat-panel { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto minmax(0,1fr); gap: 0; padding: 11px; }
+  .direct-chat-panel > header { grid-column: 1; grid-row: 1; }
+  .direct-chat-panel > .chat-tabs { grid-column: 1; grid-row: 2; }
+  .direct-friend-pane, .direct-conversation { grid-column: 1; grid-row: 3; }
+  .direct-friend-pane { margin-top: 8px; padding: 7px 0 0; border-right: 0; }
+  .direct-friend-pane.has-selection { display: none; }
+  .direct-conversation { padding-top: 8px; }
+  .direct-conversation:not(.has-peer) { display: none; }
+  .direct-conversation .chat-peer-bar { min-height: 58px; grid-template-columns: 22px 40px minmax(0,1fr) auto; padding: 5px 4px 9px; cursor: pointer; }
+  .direct-conversation .chat-peer-avatar { width: 40px; height: 40px; }
+  .direct-conversation .chat-messages { padding: 10px 3px 8px; }
+  .direct-friend-pane .chat-friend-list > button { min-height: 64px; }
 }
 
 @media (max-width: 360px) {
