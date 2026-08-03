@@ -662,6 +662,7 @@ export default function HomePage() {
   const announcedAiPass = useRef("");
   const seenGameInvites = useRef(new Set<string>());
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const mobileChatEndRef = useRef<HTMLDivElement | null>(null);
   const [favorites, setFavorites] = useState<GameId[]>(["go", "gomoku"]);
   const [completed, setCompleted] = useState(0);
   const [ready, setReady] = useState(false);
@@ -1001,6 +1002,7 @@ export default function HomePage() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "end" });
+    mobileChatEndRef.current?.scrollIntoView({ block: "end" });
   }, [chatMessages]);
 
   useEffect(() => {
@@ -2325,6 +2327,31 @@ export default function HomePage() {
         <button className={friendPanelOpen || (chatOpen && chatChannel === "direct") ? "active" : ""} onClick={() => { setChatOpen(false); setAccountOpen(false); setFriendPanelOpen(true); }} type="button"><Users size={20} /><span>好友</span>{friendBadge > 0 && <b>{Math.min(friendBadge, 9)}</b>}</button>
         <button className={accountOpen ? "active" : ""} onClick={() => { setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(true); }} type="button"><UserRound size={20} /><span>我的</span></button>
       </nav>
+
+      {chatOpen && chatChannel === "world" && (
+        <MobileWorldChannel
+          activeGame={activeGame}
+          busy={chatBusy}
+          currentUserId={authUser?.id ?? ""}
+          endRef={mobileChatEndRef}
+          hall={lobbyHall}
+          lobbyBusy={lobbyBusy}
+          lobbyCounts={lobbyCounts}
+          lobbyRooms={lobbyRooms}
+          messages={chatMessages}
+          onDelete={(messageId) => void chatMessageAction("delete", messageId)}
+          onDirect={() => { setChatChannel("direct"); setChatPeer(null); setChatMessages([]); }}
+          onHallChange={(hall) => { setLobbyHall(hall); setChatMessages([]); }}
+          onInvite={() => void sendChatRoomInvite()}
+          onJoin={(message) => void joinChatRoom(message)}
+          onLobbyRoom={(target) => void openLobbyRoom(target)}
+          onReport={(messageId) => void chatMessageAction("report", messageId)}
+          onSend={() => void sendChatMessage()}
+          onTextChange={setChatText}
+          overview={chatOverview}
+          text={chatText}
+        />
+      )}
 
       {chatOpen && (
         <ChatPanel
@@ -3662,6 +3689,106 @@ function LobbyRoomCard({ onOpen, room }: { onOpen: () => void; room: LobbyRoom }
         <footer><span><i className={`mini-stone ${room.turn}`} />{room.status === "waiting" ? "等待加入" : `${room.moveCount} 手`}</span><span><Users size={13} />{room.spectatorCount}</span><button disabled={!room.joinable && !room.spectatable} onClick={onOpen} type="button">{action}<ChevronRight size={14} /></button></footer>
       </div>
     </article>
+  );
+}
+
+function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lobbyBusy, lobbyCounts, lobbyRooms, messages, onDelete, onDirect, onHallChange, onInvite, onJoin, onLobbyRoom, onReport, onSend, onTextChange, overview, text }: {
+  activeGame: GameId;
+  busy: boolean;
+  currentUserId: string;
+  endRef: RefObject<HTMLDivElement | null>;
+  hall: LobbyHall;
+  lobbyBusy: boolean;
+  lobbyCounts: LobbyCounts;
+  lobbyRooms: LobbyRoom[];
+  messages: ChatMessage[];
+  onDelete: (messageId: string) => void;
+  onDirect: () => void;
+  onHallChange: (hall: LobbyHall) => void;
+  onInvite: () => void;
+  onJoin: (message: ChatMessage) => void;
+  onLobbyRoom: (room: LobbyRoom) => void;
+  onReport: (messageId: string) => void;
+  onSend: () => void;
+  onTextChange: (value: string) => void;
+  overview: ChatOverview;
+  text: string;
+}) {
+  const gameTitle = gameCatalog.find((game) => game.id === activeGame)?.title ?? "棋类对局";
+  const directUnread = Object.values(overview.directUnreads).reduce((sum, count) => sum + count, 0);
+  const hallName = hall === "main" ? "主大厅" : historyGameName(hall);
+
+  return (
+    <section aria-label="手机世界频道" className="mobile-world-channel">
+      <header className="mobile-world-header">
+        <div><small>WORLD LOBBY</small><h1>{hallName}</h1><p><i />{lobbyCounts[hall]} 间棋局正在开放</p></div>
+        <button aria-label="打开好友私聊" onClick={onDirect} type="button"><MessageCircle size={19} /><span>私聊</span>{directUnread > 0 && <b>{Math.min(directUnread, 99)}</b>}</button>
+      </header>
+
+      <nav aria-label="大厅分类" className="mobile-world-halls">
+        {(["main", "go", "gomoku", "reversi"] as LobbyHall[]).map((targetHall) => (
+          <button className={hall === targetHall ? "active" : ""} key={targetHall} onClick={() => onHallChange(targetHall)} type="button">
+            <span>{targetHall === "main" ? "全部" : historyGameName(targetHall)}</span><i>{lobbyCounts[targetHall]}</i>
+          </button>
+        ))}
+      </nav>
+
+      <section aria-label="正在进行的公开棋局" className="mobile-live-rooms">
+        <header><div><Waypoints size={15} /><strong>实时棋局</strong></div><span>{lobbyBusy ? <LoaderCircle className="spin" size={14} /> : lobbyRooms.length ? "左右滑动查看更多" : "等待开局"}</span></header>
+        <div className="mobile-room-rail">
+          {lobbyRooms.length === 0 ? (
+            <div className="mobile-room-empty"><span><Gamepad2 size={17} /></span><div><strong>还没有公开棋局</strong><small>创建房间并开启观战后会出现在这里</small></div></div>
+          ) : lobbyRooms.map((targetRoom) => {
+            const action = targetRoom.joinable ? "加入" : targetRoom.spectatable ? "观战" : "等待";
+            return (
+              <article className="mobile-room-ticket" key={targetRoom.id}>
+                <div className="mobile-room-ticket-top"><span>{historyGameName(targetRoom.game)}</span><i>{targetRoom.status === "waiting" ? "待加入" : `${targetRoom.moveCount} 手`}</i></div>
+                <div className="mobile-room-ticket-players">
+                  <span><UserAvatar name={targetRoom.players.black ?? "黑"} src={targetRoom.profiles.black.avatarUrl} /><b>{targetRoom.players.black ?? "等待黑方"}</b></span>
+                  <em>VS</em>
+                  <span><UserAvatar name={targetRoom.players.white ?? "白"} src={targetRoom.profiles.white.avatarUrl} /><b>{targetRoom.players.white ?? "等待白方"}</b></span>
+                </div>
+                <footer><span><Users size={12} />{targetRoom.spectatorCount}</span><button disabled={!targetRoom.joinable && !targetRoom.spectatable} onClick={() => onLobbyRoom(targetRoom)} type="button">{action}<ChevronRight size={13} /></button></footer>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section aria-label="频道消息" className="mobile-world-feed">
+        <header><strong>频道消息</strong><span><Globe2 size={12} />文明交流</span></header>
+        <div aria-live="polite" className="mobile-world-message-list">
+          {messages.length === 0 ? (
+            <div className="mobile-world-empty"><span><MessageCircle size={20} /></span><strong>这里还很安静</strong><p>和同一大厅的棋友打个招呼吧。</p></div>
+          ) : messages.map((message) => (
+            <article className={`mobile-world-message ${message.isMine ? "mine" : ""}`} key={message.id}>
+              {!message.isMine && <span className="mobile-world-avatar"><UserAvatar name={message.sender.displayName} src={message.sender.avatarUrl} /></span>}
+              <div>
+                <header><strong>{message.isMine ? "我" : message.sender.displayName}</strong><time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></header>
+                <div className="mobile-world-bubble">
+                  {message.body && <p>{message.body}</p>}
+                  {message.room && (
+                    <button className="mobile-world-invite" disabled={!message.room.open || message.sender.id === currentUserId} onClick={() => onJoin(message)} type="button">
+                      <span><Gamepad2 size={17} /></span><span><strong>{gameCatalog.find((game) => game.id === message.room?.game)?.title ?? "棋类对局"}</strong><small>{message.room.open ? "房间开放中" : "棋局已结束"}</small></span><i>{message.sender.id === currentUserId ? "已发送" : message.room.open ? "加入" : "已结束"}</i>
+                    </button>
+                  )}
+                </div>
+                <span className="mobile-world-message-action">
+                  {message.isMine ? <button aria-label="删除消息" onClick={() => onDelete(message.id)} type="button"><Trash2 size={12} />删除</button> : <button aria-label="举报消息" onClick={() => onReport(message.id)} type="button"><Flag size={12} />举报</button>}
+                </span>
+              </div>
+            </article>
+          ))}
+          <div ref={endRef} />
+        </div>
+      </section>
+
+      <form className="mobile-world-composer" onSubmit={(event) => { event.preventDefault(); onSend(); }}>
+        <button aria-label={`发送${gameTitle}房间邀请`} disabled={busy} onClick={onInvite} title="发送房间邀请" type="button"><Gamepad2 size={19} /></button>
+        <textarea aria-label="世界频道消息" maxLength={200} onChange={(event) => onTextChange(event.target.value)} placeholder="说点什么..." rows={1} value={text} />
+        <button aria-label="发送消息" className="send" disabled={busy || !text.trim()} type="submit">{busy ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}</button>
+      </form>
+    </section>
   );
 }
 

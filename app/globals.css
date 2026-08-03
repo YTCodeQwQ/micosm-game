@@ -1457,7 +1457,7 @@ body[data-theme="dark"] {
 
 .mobile-match-players { display: none; }
 .mobile-match-menu-trigger, .mobile-actions-head, .mobile-action-scrim, .mobile-reset-action { display: none; }
-.mobile-primary-nav, .mobile-game-home { display: none; }
+.mobile-primary-nav, .mobile-game-home, .mobile-world-channel { display: none; }
 .desktop-home-shell { display: contents; }
 .app-primary-content { display: contents; }
 .mobile-account-header { display: none; }
@@ -1641,6 +1641,106 @@ body[data-theme="dark"] {
   .mobile-page-open .account-summary > svg { color: #f2d38c; }
   .mobile-page-open .account-popover > button { min-height: 58px; margin-top: 8px; padding: 0 15px; border: 1px solid rgba(72,106,130,.1); border-radius: 14px; background: #fff; color: #4c697d; font-size: 11px; box-shadow: 0 6px 17px rgba(44,69,89,.06); }
   .mobile-page-open .account-popover > button:last-child { margin-top: auto; border-color: rgba(170,82,73,.12); background: #fff7f6; color: #a0524a; }
+
+  .mobile-page-open > .chat-panel.world-lobby-panel { display: none; }
+  .mobile-page-open > .mobile-world-channel {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    width: calc(100% + 14px);
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    grid-template-rows: auto auto auto minmax(0,1fr) auto;
+    margin: 8px -7px 0;
+    padding: 13px 12px 8px;
+    overflow: hidden;
+    border-top: 1px solid rgba(74,106,129,.1);
+    background: #f4f8fb;
+    color: #304d60;
+  }
+  .mobile-world-header { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px 9px; }
+  .mobile-world-header small { display: block; color: #4b8991; font-size: 8px; font-weight: 850; }
+  .mobile-world-header h1 { margin: 3px 0 0; color: #29475b; font-size: 22px; line-height: 1.1; }
+  .mobile-world-header p { display: flex; align-items: center; gap: 5px; margin: 5px 0 0; color: #8295a2; font-size: 9px; }
+  .mobile-world-header p i { width: 6px; height: 6px; border-radius: 50%; background: #49a77e; box-shadow: 0 0 0 3px rgba(73,167,126,.12); }
+  .mobile-world-header > button { position: relative; display: flex; min-width: 64px; height: 42px; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(73,105,129,.11); border-radius: 13px; background: #fff; color: #56778b; font-size: 10px; font-weight: 760; box-shadow: 0 5px 14px rgba(39,68,90,.06); }
+  .mobile-world-header > button b { position: absolute; top: -5px; right: -4px; display: grid; min-width: 18px; height: 18px; padding: 0 4px; place-items: center; border: 2px solid #f4f8fb; border-radius: 9px; background: #dd665e; color: #fff; font-size: 8px; }
+
+  .mobile-world-halls { display: grid; min-height: 43px; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 3px; padding: 3px; border-radius: 13px; background: #e7eef3; }
+  .mobile-world-halls button { display: flex; min-width: 0; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 10px; background: transparent; color: #748895; font-size: 10px; font-weight: 760; }
+  .mobile-world-halls button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-world-halls button i { display: grid; min-width: 17px; height: 17px; padding: 0 4px; place-items: center; border-radius: 9px; background: rgba(255,255,255,.52); font-size: 8px; font-style: normal; }
+  .mobile-world-halls button.active { background: #fff; color: #267681; box-shadow: 0 3px 10px rgba(44,75,96,.1); }
+  .mobile-world-halls button.active i { background: #dff0f0; }
+
+  .mobile-live-rooms { min-width: 0; padding: 10px 0 9px; border-bottom: 1px solid rgba(71,104,127,.1); }
+  .mobile-live-rooms > header { display: flex; height: 22px; align-items: center; justify-content: space-between; padding: 0 2px 6px; }
+  .mobile-live-rooms > header > div { display: flex; align-items: center; gap: 6px; color: #3f687d; }
+  .mobile-live-rooms > header strong { font-size: 10px; }
+  .mobile-live-rooms > header span { color: #94a2ac; font-size: 8px; }
+  .mobile-room-rail { display: flex; min-width: 0; gap: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: none; }
+  .mobile-room-rail::-webkit-scrollbar { display: none; }
+  .mobile-room-ticket { display: grid; min-width: min(260px,82vw); height: 98px; flex: 0 0 auto; grid-template-rows: auto 1fr auto; padding: 8px 9px; scroll-snap-align: start; border: 1px solid rgba(70,104,128,.11); border-radius: 13px; background: #fff; box-shadow: 0 5px 14px rgba(43,70,91,.055); }
+  .mobile-room-ticket-top { display: flex; align-items: center; justify-content: space-between; }
+  .mobile-room-ticket-top span { color: #375c72; font-size: 10px; font-weight: 800; }
+  .mobile-room-ticket-top i { color: #8998a3; font-size: 8px; font-style: normal; }
+  .mobile-room-ticket-players { display: grid; min-width: 0; grid-template-columns: minmax(0,1fr) 22px minmax(0,1fr); align-items: center; gap: 4px; }
+  .mobile-room-ticket-players > span { display: grid; min-width: 0; grid-template-columns: 27px minmax(0,1fr); align-items: center; gap: 5px; }
+  .mobile-room-ticket-players .user-avatar { width: 27px; height: 27px; border-radius: 8px; }
+  .mobile-room-ticket-players b { overflow: hidden; color: #526977; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-room-ticket-players em { color: #a5afb6; font-size: 7px; font-style: normal; font-weight: 800; text-align: center; }
+  .mobile-room-ticket footer { display: flex; min-height: 24px; align-items: center; color: #8a98a3; font-size: 8px; }
+  .mobile-room-ticket footer > span { display: flex; align-items: center; gap: 4px; }
+  .mobile-room-ticket footer button { display: flex; min-height: 26px; align-items: center; gap: 2px; margin-left: auto; padding: 0 9px; border: 0; border-radius: 8px; background: #347b85; color: #fff; font-size: 8px; font-weight: 770; }
+  .mobile-room-ticket footer button:disabled { background: #b8c2c8; }
+  .mobile-room-empty { display: flex; width: 100%; height: 72px; align-items: center; gap: 10px; padding: 10px 12px; border: 1px dashed rgba(71,105,128,.18); border-radius: 13px; background: rgba(255,255,255,.55); color: #77909e; }
+  .mobile-room-empty > span { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: #e5f0f2; color: #4a8b91; }
+  .mobile-room-empty strong, .mobile-room-empty small { display: block; }
+  .mobile-room-empty strong { color: #536f80; font-size: 10px; }
+  .mobile-room-empty small { margin-top: 4px; color: #95a3ad; font-size: 8px; }
+
+  .mobile-world-feed { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
+  .mobile-world-feed > header { display: flex; min-height: 37px; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 7px 2px 5px; }
+  .mobile-world-feed > header strong { color: #3c5d71; font-size: 10px; }
+  .mobile-world-feed > header span { display: flex; align-items: center; gap: 4px; color: #93a1aa; font-size: 8px; }
+  .mobile-world-message-list { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding: 2px 2px 10px; overscroll-behavior: contain; scrollbar-width: none; }
+  .mobile-world-message-list::-webkit-scrollbar { display: none; }
+  .mobile-world-message { display: grid; min-width: 0; grid-template-columns: 34px minmax(0,1fr); align-items: flex-start; gap: 7px; margin: 8px 0 12px; }
+  .mobile-world-message.mine { display: flex; justify-content: flex-end; padding-left: 50px; }
+  .mobile-world-avatar, .mobile-world-avatar .user-avatar { width: 34px; height: 34px; }
+  .mobile-world-avatar .user-avatar { border-radius: 10px; }
+  .mobile-world-message > div { min-width: 0; max-width: 84%; }
+  .mobile-world-message.mine > div { display: flex; align-items: flex-end; flex-direction: column; }
+  .mobile-world-message > div > header { display: flex; align-items: center; gap: 7px; margin: 0 2px 4px; }
+  .mobile-world-message > div > header strong { overflow: hidden; color: #607686; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-world-message > div > header time { color: #a4afb6; font-size: 7px; }
+  .mobile-world-message.mine > div > header { justify-content: flex-end; }
+  .mobile-world-bubble { max-width: 100%; padding: 9px 11px; border: 1px solid rgba(71,102,124,.09); border-radius: 5px 14px 14px 14px; background: #fff; color: #3f5360; box-shadow: 0 4px 12px rgba(41,68,88,.045); }
+  .mobile-world-message.mine .mobile-world-bubble { border: 0; border-radius: 14px 5px 14px 14px; background: #dcecef; color: #275763; box-shadow: none; }
+  .mobile-world-bubble > p { margin: 0; overflow-wrap: anywhere; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+  .mobile-world-invite { display: grid; width: min(230px,68vw); min-height: 48px; grid-template-columns: 32px minmax(0,1fr) auto; align-items: center; gap: 7px; margin-top: 7px; padding: 6px 7px; border: 0; border-radius: 10px; background: #edf4f6; color: #4b6b7d; text-align: left; }
+  .mobile-world-bubble > .mobile-world-invite:first-child { margin-top: 0; }
+  .mobile-world-invite > span:first-child { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: #fff; color: #3e848b; }
+  .mobile-world-invite strong, .mobile-world-invite small { display: block; }
+  .mobile-world-invite strong { font-size: 9px; }
+  .mobile-world-invite small { margin-top: 3px; color: #8a9ba5; font-size: 7px; }
+  .mobile-world-invite i { color: #378088; font-size: 8px; font-style: normal; font-weight: 780; }
+  .mobile-world-invite:disabled { opacity: .62; }
+  .mobile-world-message-action { display: flex; min-height: 17px; justify-content: flex-start; margin-top: 2px; }
+  .mobile-world-message.mine .mobile-world-message-action { justify-content: flex-end; }
+  .mobile-world-message-action button { display: flex; align-items: center; gap: 3px; padding: 2px 3px; border: 0; background: transparent; color: #a0abb2; font-size: 7px; }
+  .mobile-world-empty { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; color: #91a1ab; text-align: center; }
+  .mobile-world-empty > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 14px; background: #e5eef3; color: #648698; }
+  .mobile-world-empty strong { margin-top: 9px; color: #627887; font-size: 11px; }
+  .mobile-world-empty p { margin: 4px 0 0; font-size: 8px; }
+
+  .mobile-world-composer { display: grid; min-width: 0; min-height: 54px; flex: 0 0 auto; grid-template-columns: 42px minmax(0,1fr) 42px; align-items: center; gap: 6px; padding: 6px 0 0; border-top: 1px solid rgba(70,102,125,.1); background: #f4f8fb; }
+  .mobile-world-composer > button { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid rgba(68,100,124,.11); border-radius: 13px; background: #fff; color: #53788c; }
+  .mobile-world-composer > button.send { border-color: #367d86; background: #367d86; color: #fff; }
+  .mobile-world-composer > button:disabled { opacity: .45; }
+  .mobile-world-composer textarea { width: 100%; min-width: 0; height: 42px; max-height: 42px; resize: none; padding: 12px 13px; overflow: hidden; border: 1px solid rgba(68,100,124,.11); border-radius: 13px; outline: 0; background: #fff; color: #385366; font: inherit; font-size: 11px; line-height: 17px; }
+  .mobile-world-composer textarea:focus { border-color: rgba(54,125,134,.42); box-shadow: 0 0 0 3px rgba(54,125,134,.08); }
 
   .micosm-app.match-session-active {
     height: 100dvh;
