@@ -198,7 +198,8 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /\.move-confirm-bar/);
   assert.match(styles, /\.mobile-direction-pad/);
   assert.match(styles, /\.selected-point/);
-  assert.match(styles, /calc\(100dvh - 250px\)/);
+  assert.match(styles, /calc\(100dvh - 280px\)/);
+  assert.match(page, /移动落点/);
   assert.match(styles, /\.footer-actions\.is-open/);
   assert.match(styles, /button\.stone\.black \{ background: radial-gradient\(circle closest-side at 50% 50%/);
   assert.match(styles, /button\.stone\.white \{ background: radial-gradient\(circle closest-side at 50% 50%/);

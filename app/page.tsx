@@ -2220,7 +2220,7 @@ export default function HomePage() {
   const canChooseMove = Boolean(!review && room?.role && (
     isMyTurn || (remoteState?.game === "go" && remoteState.status === "scoring")
   ));
-  const showMoveControls = Boolean(room?.role && room.opponentReady && !review && (remoteState?.status === "playing" || remoteState?.status === "scoring"));
+  const showMoveControls = Boolean(room?.role && !review && remoteState && remoteState.status !== "ended");
   const pendingGameInvite = friendsData.gameInvites[0] ?? null;
   const friendBadge = friendsData.incomingRequests.length + friendsData.gameInvites.length;
   const chatBadge = chatOverview.worldUnread + Object.values(chatOverview.directUnreads).reduce((sum, count) => sum + count, 0);
@@ -2577,11 +2577,15 @@ export default function HomePage() {
                 <CircleDot size={18} />
                 <span><strong>{pendingMove ? `第 ${pendingMove[0] + 1} 行 · 第 ${pendingMove[1] + 1} 列` : "选择落点"}</strong><small>{canChooseMove ? pendingMove ? isPendingMoveLegal(pendingMove) ? "位置可落子，确认后提交" : "当前位置不可落子" : "单击选择，双击可直接落子" : "等待对手落子后再确认"}</small></span>
               </div>
-              <div className="mobile-direction-pad" aria-label="移动落点">
-                <button aria-label="向上移动" className="move-up" disabled={actionBusy} onClick={() => movePendingPoint(-1, 0)} type="button"><ChevronUp size={19} /></button>
-                <button aria-label="向左移动" className="move-left" disabled={actionBusy} onClick={() => movePendingPoint(0, -1)} type="button"><ChevronLeft size={19} /></button>
-                <button aria-label="向下移动" className="move-down" disabled={actionBusy} onClick={() => movePendingPoint(1, 0)} type="button"><ChevronDown size={19} /></button>
-                <button aria-label="向右移动" className="move-right" disabled={actionBusy} onClick={() => movePendingPoint(0, 1)} type="button"><ChevronRight size={19} /></button>
+              <div className="mobile-direction-control">
+                <small>移动落点</small>
+                <div className="mobile-direction-pad" aria-label="移动落点">
+                  <button aria-label="向上移动" className="move-up" disabled={actionBusy} onClick={() => movePendingPoint(-1, 0)} type="button"><ChevronUp size={22} /></button>
+                  <button aria-label="向左移动" className="move-left" disabled={actionBusy} onClick={() => movePendingPoint(0, -1)} type="button"><ChevronLeft size={22} /></button>
+                  <span className="move-center" aria-hidden="true"><CircleDot size={15} /></span>
+                  <button aria-label="向右移动" className="move-right" disabled={actionBusy} onClick={() => movePendingPoint(0, 1)} type="button"><ChevronRight size={22} /></button>
+                  <button aria-label="向下移动" className="move-down" disabled={actionBusy} onClick={() => movePendingPoint(1, 0)} type="button"><ChevronDown size={22} /></button>
+                </div>
               </div>
               <button className="confirm-move-button" disabled={actionBusy || !isPendingMoveLegal(pendingMove)} onClick={() => confirmRoomPoint()} type="button"><Check size={18} />{remoteState?.status === "scoring" ? "确认标记" : "确认落子"}</button>
             </div>
