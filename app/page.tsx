@@ -2605,7 +2605,7 @@ export default function HomePage() {
           )}
 
           {mobileMatchMenuOpen && <button aria-label="关闭对局操作" className="mobile-action-scrim" onClick={() => setMobileMatchMenuOpen(false)} type="button" />}
-          <footer className={`play-footer ${isMyTurn ? "is-my-turn" : ""}`}>
+          <footer className={`play-footer ${isMyTurn ? "is-my-turn" : ""} ${mobileMatchMenuOpen ? "has-mobile-menu" : ""}`}>
             <div className="status-pill"><span className={`mini-stone ${visibleTurn}`} /><span><strong>{gameStatus}</strong>{remoteState && ["playing", "scoring"].includes(remoteState.status) && <small>{remoteState.notice}</small>}</span></div>
             <div className={`footer-actions ${mobileMatchMenuOpen ? "is-open" : ""}`}>
               <button aria-label="打开对局操作" className="mobile-match-menu-trigger" onClick={() => setMobileMatchMenuOpen(true)} title="对局操作" type="button"><MoreHorizontal size={20} /></button>

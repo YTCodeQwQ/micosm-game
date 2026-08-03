@@ -1679,6 +1679,7 @@ body[data-theme="dark"] {
     padding: 6px 8px max(6px,env(safe-area-inset-bottom));
     border-radius: 0;
   }
+  .match-session-active .play-footer.has-mobile-menu { z-index: 72; }
   .match-session-active .status-pill strong { max-width: calc(100vw - 90px); font-size: 11px; }
   .match-session-active .footer-actions > :not(.mobile-match-menu-trigger) { display: none; }
   .mobile-match-menu-trigger { display: grid; width: 38px; height: 36px; place-items: center; border: 1px solid rgba(70,106,131,.14); border-radius: 10px; background: rgba(255,255,255,.9); color: #486b82; }
