@@ -1593,10 +1593,10 @@ body[data-theme="dark"] {
   .mobile-join-room input { min-width: 0; padding: 0 11px; outline: 0; font-size: 10px; text-transform: uppercase; }
   .mobile-join-room button { display: grid; place-items: center; }
 
-  .mobile-page-open { min-height: 100dvh; background: #eef4f8; }
+  .mobile-page-open { display: flex; height: 100dvh; min-height: 0; flex-direction: column; overflow: hidden; background: #eef4f8; }
   .mobile-page-open .app-primary-content { display: none; }
-  .mobile-page-open > .topbar { position: relative; top: 0; box-shadow: none; }
-  .mobile-page-open > .chat-panel, .mobile-page-open > .friend-panel { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; width: calc(100% + 14px); height: auto; min-height: calc(100dvh - 151px - env(safe-area-inset-bottom)); max-height: none; margin: 8px -7px 0; padding: 15px 12px 10px; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background-color: #f4f8fb; background-image: none; box-shadow: none; backdrop-filter: none; }
+  .mobile-page-open > .topbar { position: relative; top: 0; flex: 0 0 auto; box-shadow: none; }
+  .mobile-page-open > .chat-panel, .mobile-page-open > .friend-panel { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; width: calc(100% + 14px); height: auto; min-height: 0; max-height: none; flex: 1 1 auto; margin: 8px -7px 0; padding: 15px 12px 10px; overflow: hidden; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background-color: #f4f8fb; background-image: none; box-shadow: none; backdrop-filter: none; }
   .mobile-page-open > .chat-panel > header, .mobile-page-open > .friend-panel > header { min-height: 57px; align-items: center; padding: 1px 2px 12px; }
   .mobile-page-open > .chat-panel > header small, .mobile-page-open > .friend-panel > header small { color: #4b8991; font-size: 8px; }
   .mobile-page-open > .chat-panel > header h2, .mobile-page-open > .friend-panel > header h2 { margin-top: 4px; color: #29475b; font-size: 23px; }
@@ -1607,6 +1607,8 @@ body[data-theme="dark"] {
   .world-lobby-panel > .lobby-room-browser { grid-column: 1; grid-row: 5; }
   .world-lobby-panel > .chat-messages { grid-column: 1; grid-row: 6; }
   .world-lobby-panel > .chat-composer { grid-column: 1; grid-row: 7; }
+  .world-lobby-panel > .chat-messages { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .world-lobby-panel > .chat-composer { position: relative; z-index: 2; padding-bottom: 2px; background: #f4f8fb; }
   .world-hall-tabs { gap: 4px; margin-top: 7px; }
   .world-hall-tabs button { min-height: 38px; flex-direction: column; gap: 2px; border-radius: 10px; font-size: 9px; }
   .world-hall-tabs button i { min-width: 0; height: auto; padding: 0; background: transparent; font-size: 7px; }
@@ -1625,7 +1627,7 @@ body[data-theme="dark"] {
   .direct-conversation.has-peer { display: flex; }
   .direct-conversation .chat-peer-bar { cursor: pointer; }
 
-  .mobile-page-open > .account-popover { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; display: flex; width: calc(100% + 14px); min-height: calc(100dvh - 151px - env(safe-area-inset-bottom)); flex-direction: column; margin: 8px -7px 0; padding: 16px 12px; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background: #f4f8fb; box-shadow: none; backdrop-filter: none; }
+  .mobile-page-open > .account-popover { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; display: flex; width: calc(100% + 14px); height: auto; min-height: 0; flex: 1 1 auto; flex-direction: column; margin: 8px -7px 0; padding: 16px 12px; overflow-y: auto; border: 0; border-top: 1px solid rgba(77,109,132,.1); border-radius: 0; background: #f4f8fb; box-shadow: none; backdrop-filter: none; }
   .mobile-account-header { display: block; min-height: 57px; padding: 1px 2px 12px; }
   .mobile-account-header small { color: #4b8991; font-size: 8px; font-weight: 800; }
   .mobile-account-header h2 { margin: 4px 0 0; color: #29475b; font-size: 23px; }

@@ -216,6 +216,8 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /\.mobile-primary-nav/);
   assert.match(styles, /\.mobile-page-open \.app-primary-content/);
   assert.match(styles, /\.mobile-page-open > \.chat-panel/);
+  assert.match(styles, /height: 100dvh; min-height: 0; flex-direction: column; overflow: hidden/);
+  assert.match(styles, /overscroll-behavior: contain/);
   assert.match(styles, /\.mobile-home-hero/);
   assert.match(styles, /\.mobile-room-studio/);
   assert.match(styles, /\.play-footer\.has-mobile-menu \{ z-index: 72; \}/);
