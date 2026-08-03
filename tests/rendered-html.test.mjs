@@ -96,6 +96,11 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /通知中心/);
   assert.match(page, /游戏设置/);
   assert.match(page, /mobile-match-players/);
+  assert.match(page, /pendingMove/);
+  assert.match(page, /mobile-direction-pad/);
+  assert.match(page, /确认落子/);
+  assert.match(page, /onDoubleClick/);
+  assert.match(page, /is-opponent/);
   assert.match(page, /落子音效/);
   assert.match(page, /最后一手标记/);
   assert.match(page, /micosm-settings/);
@@ -187,6 +192,9 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(styles, /Mobile-first play experience/);
   assert.match(styles, /\.match-library, \.info-panel \{ display: none; \}/);
   assert.match(styles, /grid-template-columns: minmax\(0,1fr\) 24px minmax\(0,1fr\)/);
+  assert.match(styles, /\.move-confirm-bar/);
+  assert.match(styles, /\.mobile-direction-pad/);
+  assert.match(styles, /\.selected-point/);
   assert.match(styles, /button\.stone\.black \{ background: radial-gradient\(circle closest-side at 50% 50%/);
   assert.match(styles, /button\.stone\.white \{ background: radial-gradient\(circle closest-side at 50% 50%/);
   assert.match(page, /micosm-match-table-desktop\.webp/);

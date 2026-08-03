@@ -10,8 +10,10 @@ import {
   BookOpen,
   Camera,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   ChevronsLeft,
   ChevronsRight,
   CircleDot,
@@ -626,6 +628,7 @@ export default function HomePage() {
   const [confirmIntent, setConfirmIntent] = useState<ConfirmIntent>(null);
   const [toast, setToast] = useState<{ id: number; message: string; tone: ToastTone } | null>(null);
   const [boardFeedback, setBoardFeedback] = useState<"move" | "invalid" | null>(null);
+  const [pendingMove, setPendingMove] = useState<Point | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [preferences, setPreferences] = useState<GamePreferences>(defaultPreferences);
   const [outcome, setOutcome] = useState<MatchOutcome | null>(null);
@@ -1743,6 +1746,7 @@ export default function HomePage() {
 
   function adoptRoom(nextRoom: RoomView, token = "") {
     setRoom(nextRoom);
+    setPendingMove(null);
     setPlayerId(token);
     setActiveGame(nextRoom.game);
     setMainView("games");
@@ -1929,6 +1933,7 @@ export default function HomePage() {
         playMoveSound();
         setBoardFeedback("move");
       }
+      if (action.type === "play" || action.type === "markDead") setPendingMove(null);
       if (action.type === "respondRematch" && action.accept) {
         setOutcome(null);
         setReview(null);
@@ -1964,6 +1969,7 @@ export default function HomePage() {
 
   function clearRoom() {
     setRoom(null);
+    setPendingMove(null);
     setPlayerId("");
     setAiThinking(false);
     setAiError("");
@@ -2024,6 +2030,7 @@ export default function HomePage() {
 
   function selectGame(game: GameId) {
     if (room && room.game !== game) return showToast("请先退出当前房间再切换游戏");
+    setPendingMove(null);
     setActiveGame(game);
   }
 
@@ -2208,13 +2215,49 @@ export default function HomePage() {
   const rematchRequest = remoteState?.rematchRequest ?? null;
   const canRequestUndo = Boolean(room && remoteState?.status === "playing" && !undoRequest && !aiThinking && (room.mode === "ai" ? remoteState.turn === room.role && remoteState.moves.length >= 2 : remoteState.lastPlayer === room.role));
   const isMyTurn = Boolean(!review && room?.role && remoteState?.status === "playing" && visibleTurn === room.role);
+  const canChooseMove = Boolean(!review && room?.role && (
+    isMyTurn || (remoteState?.game === "go" && remoteState.status === "scoring")
+  ));
+  const showMoveControls = Boolean(room?.role && room.opponentReady && !review && (remoteState?.status === "playing" || remoteState?.status === "scoring"));
   const pendingGameInvite = friendsData.gameInvites[0] ?? null;
   const friendBadge = friendsData.incomingRequests.length + friendsData.gameInvites.length;
   const chatBadge = chatOverview.worldUnread + Object.values(chatOverview.directUnreads).reduce((sum, count) => sum + count, 0);
 
-  function playRoomPoint(row: number, col: number) {
-    if (review) return;
-    void submitMatchAction(remoteState?.game === "go" && remoteState.status === "scoring" ? { type: "markDead", row, col } : { type: "play", row, col });
+  function isPendingMoveLegal(point: Point | null) {
+    if (!point || !remoteState || !room?.role || !canChooseMove) return false;
+    const [row, col] = point;
+    if (row < 0 || col < 0 || row >= activeBoardSize || col >= activeBoardSize) return false;
+    if (remoteState.game === "go" && remoteState.status === "scoring") return Boolean(visibleGoBoard[row]?.[col]);
+    if (remoteState.game === "go") return !visibleGoBoard[row]?.[col];
+    if (remoteState.game === "gomoku") return !visibleGomokuBoard[row]?.[col];
+    return !visibleReversiBoard[row]?.[col] && getReversiFlips(visibleReversiBoard, row, col, room.role).length > 0;
+  }
+
+  function selectRoomPoint(row: number, col: number) {
+    if (review || !room?.role || !remoteState) return;
+    setPendingMove([row, col]);
+  }
+
+  function confirmRoomPoint(point: Point | null = pendingMove) {
+    if (review || !room?.role || !remoteState) return;
+    if (!canChooseMove) return showToast(remoteState.status === "playing" ? "现在还没有轮到你" : "当前阶段不能落子");
+    if (!point) return showToast("请先选择一个落点");
+    const [row, col] = point;
+    if (!isPendingMoveLegal(point)) {
+      if (remoteState.game === "go" && remoteState.status === "scoring") return showToast("请选择棋盘上的棋子来标记死子");
+      if ((remoteState.game === "go" ? visibleGoBoard : remoteState.game === "gomoku" ? visibleGomokuBoard : visibleReversiBoard)[row]?.[col]) return showToast("这个位置已经有棋子了");
+      if (remoteState.game === "reversi") return showToast("这个位置不能落子");
+    }
+    void submitMatchAction(remoteState.game === "go" && remoteState.status === "scoring" ? { type: "markDead", row, col } : { type: "play", row, col });
+  }
+
+  function movePendingPoint(rowDelta: number, colDelta: number) {
+    if (!remoteState || !room?.role || actionBusy) return;
+    const lastMove = remoteState.lastMove;
+    const origin = pendingMove ?? lastMove ?? [Math.floor(activeBoardSize / 2), Math.floor(activeBoardSize / 2)];
+    const nextRow = Math.max(0, Math.min(activeBoardSize - 1, origin[0] + rowDelta));
+    const nextCol = Math.max(0, Math.min(activeBoardSize - 1, origin[1] + colDelta));
+    setPendingMove([nextRow, nextCol]);
   }
 
   return (
@@ -2439,7 +2482,9 @@ export default function HomePage() {
                 game="go"
                 lastMove={preferences.showLastMove ? reviewFrame?.lastMove ?? (remoteState?.game === "go" ? remoteState.lastMove : null) : null}
                 deadPoints={!review && remoteState?.game === "go" ? remoteState.goScoring?.dead ?? [] : []}
-                onPlay={playRoomPoint}
+                onConfirm={confirmRoomPoint}
+                onPlay={selectRoomPoint}
+                selectedPoint={review ? null : pendingMove}
                 size={remoteState?.game === "go" ? remoteState.size : goSize}
               />
             )}
@@ -2449,7 +2494,9 @@ export default function HomePage() {
                 game="gomoku"
                 lastMove={preferences.showLastMove ? reviewFrame?.lastMove ?? (remoteState?.game === "gomoku" ? remoteState.lastMove : null) : null}
                 analysisPoints={reviewFrame?.insight?.points}
-                onPlay={playRoomPoint}
+                onConfirm={confirmRoomPoint}
+                onPlay={selectRoomPoint}
+                selectedPoint={review ? null : pendingMove}
                 size={15}
               />
             )}
@@ -2460,7 +2507,8 @@ export default function HomePage() {
                   const legal = Boolean(preferences.showMoveHints && canAct && getReversiFlips(visibleReversiBoard, rowIndex, colIndex, visibleTurn).length > 0);
                   const reversiLastMove = reviewFrame?.lastMove ?? (remoteState?.game === "reversi" ? remoteState.lastMove : null);
                   const isLast = preferences.showLastMove && reversiLastMove?.[0] === rowIndex && reversiLastMove?.[1] === colIndex;
-                  return <button aria-label={`${rowIndex + 1}-${colIndex + 1}${stone ? playerName(stone) : legal ? "可落子" : "空位"}`} className={`${stone ? `stone ${stone}` : ""} ${legal ? "legal" : ""} ${isLast ? "last" : ""}`} key={`${rowIndex}-${colIndex}`} onClick={() => playRoomPoint(rowIndex, colIndex)} type="button" />;
+                  const isSelected = !review && pendingMove?.[0] === rowIndex && pendingMove?.[1] === colIndex;
+                  return <button aria-label={`${rowIndex + 1}-${colIndex + 1}${stone ? playerName(stone) : legal ? "可落子" : "空位"}`} className={`${stone ? `stone ${stone}` : ""} ${legal ? "legal" : ""} ${isLast ? "last" : ""} ${isSelected ? "selected-point" : ""}`} key={`${rowIndex}-${colIndex}`} onClick={() => selectRoomPoint(rowIndex, colIndex)} onDoubleClick={() => confirmRoomPoint([rowIndex, colIndex])} type="button" />;
                 }))}
               </div>
             )}
@@ -2520,6 +2568,22 @@ export default function HomePage() {
               </div>
             )}
           </div>
+
+          {showMoveControls && (
+            <div className={`move-confirm-bar ${canChooseMove ? "is-actionable" : "is-waiting"}`}>
+              <div className="move-selection-copy">
+                <CircleDot size={18} />
+                <span><strong>{pendingMove ? `第 ${pendingMove[0] + 1} 行 · 第 ${pendingMove[1] + 1} 列` : "选择落点"}</strong><small>{canChooseMove ? pendingMove ? isPendingMoveLegal(pendingMove) ? "位置可落子，确认后提交" : "当前位置不可落子" : "单击选择，双击可直接落子" : "等待对手落子后再确认"}</small></span>
+              </div>
+              <div className="mobile-direction-pad" aria-label="移动落点">
+                <button aria-label="向上移动" className="move-up" disabled={actionBusy} onClick={() => movePendingPoint(-1, 0)} type="button"><ChevronUp size={19} /></button>
+                <button aria-label="向左移动" className="move-left" disabled={actionBusy} onClick={() => movePendingPoint(0, -1)} type="button"><ChevronLeft size={19} /></button>
+                <button aria-label="向下移动" className="move-down" disabled={actionBusy} onClick={() => movePendingPoint(1, 0)} type="button"><ChevronDown size={19} /></button>
+                <button aria-label="向右移动" className="move-right" disabled={actionBusy} onClick={() => movePendingPoint(0, 1)} type="button"><ChevronRight size={19} /></button>
+              </div>
+              <button className="confirm-move-button" disabled={actionBusy || !isPendingMoveLegal(pendingMove)} onClick={() => confirmRoomPoint()} type="button"><Check size={18} />{remoteState?.status === "scoring" ? "确认标记" : "确认落子"}</button>
+            </div>
+          )}
 
           <footer className={`play-footer ${isMyTurn ? "is-my-turn" : ""}`}>
             <div className="status-pill"><span className={`mini-stone ${visibleTurn}`} /><span><strong>{gameStatus}</strong>{remoteState && ["playing", "scoring"].includes(remoteState.status) && <small>{remoteState.notice}</small>}</span></div>
@@ -2862,9 +2926,9 @@ function UserAvatar({ name, src }: { name: string; src?: string | null }) {
 function MatchPlayerCard({ active, clockMs, color, isMe, name, profile }: { active?: boolean; clockMs?: number; color: Player; isMe: boolean; name?: string | null; profile?: PlayerProfile | null }) {
   const displayName = name ?? "等待对手";
   return (
-    <div className={`match-player ${color} ${name ? "ready" : "waiting"} ${active ? "is-active" : ""}`}>
+    <div className={`match-player ${color} ${name ? "ready" : "waiting"} ${active ? "is-active" : ""} ${isMe ? "is-me" : "is-opponent"}`}>
       <UserAvatar name={displayName} src={profile?.avatarUrl} />
-      <div><strong>{displayName}{isMe && <em>我</em>}</strong><p>{profile?.signature || (name ? "未设置个性签名" : "尚未加入对局")}</p>{clockMs !== undefined && <time className={clockMs <= 60_000 ? "is-low" : ""}><Clock3 size={11} />{formatMatchClock(clockMs)}</time>}</div>
+      <div><strong>{displayName}{name && <em>{isMe ? "我" : "对手"}</em>}</strong><p>{profile?.signature || (name ? "未设置个性签名" : "尚未加入对局")}</p>{clockMs !== undefined && <time className={clockMs <= 60_000 ? "is-low" : ""}><Clock3 size={11} />{formatMatchClock(clockMs)}</time>}</div>
       <span>{active && <i />} {color === "black" ? "黑" : "白"}</span>
     </div>
   );
@@ -3656,7 +3720,7 @@ function FriendEmpty({ text }: { text: string }) {
   return <div className="friend-empty"><Users size={18} /><span>{text}</span></div>;
 }
 
-function IntersectionBoard({ analysisPoints = [], board, deadPoints = [], game, lastMove, onPlay, size }: { analysisPoints?: Point[]; board: Stone[][]; deadPoints?: Point[]; game: "go" | "gomoku"; lastMove: Point | null; onPlay: (row: number, col: number) => void; size: number }) {
+function IntersectionBoard({ analysisPoints = [], board, deadPoints = [], game, lastMove, onConfirm, onPlay, selectedPoint = null, size }: { analysisPoints?: Point[]; board: Stone[][]; deadPoints?: Point[]; game: "go" | "gomoku"; lastMove: Point | null; onConfirm?: (point: Point) => void; onPlay: (row: number, col: number) => void; selectedPoint?: Point | null; size: number }) {
   const stars = starPoints(size, game);
   const dead = new Set(deadPoints.map(([row, col]) => `${row}-${col}`));
   const analysis = new Set(analysisPoints.map(([row, col]) => `${row}-${col}`));
@@ -3667,12 +3731,14 @@ function IntersectionBoard({ analysisPoints = [], board, deadPoints = [], game, 
         const isLast = lastMove?.[0] === rowIndex && lastMove?.[1] === colIndex;
         const isDead = dead.has(`${rowIndex}-${colIndex}`);
         const isAnalysis = analysis.has(`${rowIndex}-${colIndex}`);
+        const isSelected = selectedPoint?.[0] === rowIndex && selectedPoint?.[1] === colIndex;
         return (
           <button
             aria-label={`${rowIndex + 1}-${colIndex + 1}${stone ? playerName(stone) : "空位"}`}
-            className={`${edgeClasses} ${stars.has(`${rowIndex}-${colIndex}`) ? "star" : ""} ${stone ? `stone ${stone}` : ""} ${isLast ? "last" : ""} ${isDead ? "dead" : ""} ${isAnalysis ? "analysis-point" : ""}`}
+            className={`${edgeClasses} ${stars.has(`${rowIndex}-${colIndex}`) ? "star" : ""} ${stone ? `stone ${stone}` : ""} ${isLast ? "last" : ""} ${isDead ? "dead" : ""} ${isAnalysis ? "analysis-point" : ""} ${isSelected ? "selected-point" : ""}`}
             key={`${rowIndex}-${colIndex}`}
             onClick={() => onPlay(rowIndex, colIndex)}
+            onDoubleClick={() => onConfirm?.([rowIndex, colIndex])}
             type="button"
           />
         );
