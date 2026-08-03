@@ -1,10 +1,16 @@
+/// <reference types="@cloudflare/workers-types/latest" />
+
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { GameRoomHub } from "./game-room-hub";
+
+export { GameRoomHub };
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  ROOM_HUB: DurableObjectNamespace<GameRoomHub>;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -28,6 +34,13 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/realtime") {
+      const roomId = url.searchParams.get("roomId")?.trim().toUpperCase();
+      if (!roomId) return Response.json({ error: "缺少房间号" }, { status: 400 });
+      const roomHub = env.ROOM_HUB.get(env.ROOM_HUB.idFromName(roomId));
+      return roomHub.fetch(request);
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];

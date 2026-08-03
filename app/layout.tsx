@@ -21,23 +21,21 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase,
-    title: "弈境 | 棋类益智游戏平台",
-    description: "随时开一局的棋类与逻辑训练平台。",
+    title: "Micosm Game | Board & Logic",
+    description: "现代棋类与逻辑游戏平台。",
     icons: {
-      icon: "/favicon.svg",
-      shortcut: "/favicon.svg",
+      icon: "/micosm-logo.png",
+      shortcut: "/micosm-logo.png",
     },
     openGraph: {
-      title: "弈境 | 棋类益智游戏平台",
-      description: "棋类、逻辑、每日训练。",
-      images: [{ url: "/og.png", width: 1200, height: 630, alt: "弈境棋类益智游戏平台" }],
+      title: "Micosm Game | Board & Logic",
+      description: "围棋、五子棋与黑白棋多人对战平台。",
       type: "website",
     },
     twitter: {
       card: "summary_large_image",
-      title: "弈境 | 棋类益智游戏平台",
-      description: "棋类、逻辑、每日训练。",
-      images: ["/og.png"],
+      title: "Micosm Game | Board & Logic",
+      description: "围棋、五子棋与黑白棋多人对战平台。",
     },
   };
 }

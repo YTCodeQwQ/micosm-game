@@ -1,8 +1,8 @@
-# vinext-starter
+# Micosm Game
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Micosm Game is a mobile-first anime-inspired board game platform for Go,
+Gomoku and Reversi. It combines private rooms, matchmaking, ranked play,
+friends, chat, replayable match history and portable human-versus-AI play.
 
 ## Prerequisites
 
@@ -18,79 +18,45 @@ npm run build
 
 This starter does not use `wrangler.jsonc`.
 
-## Included Shape
+## Current Features
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+- Standard Go, Gomoku/Renju and Reversi rules
+- Private rooms, invite codes, QR joining and random matchmaking
+- Separate ranked ladders for Go and Gomoku
+- Real-time room updates through WebSockets and a Durable Object hub
+- Password accounts with unique names and stable public `MG-` player IDs
+- Profiles, friends, direct chat, world chat and game invitations
+- Consent-based undo, resignation, rematch and disconnect adjudication
+- Persistent match archives with replay timelines and tactical annotations
+- Four AI levels, with optional KataGo and Rapfi services for master play
+- Responsive desktop and mobile interfaces
 
-## Workspace Auth Headers
+The SMS verification field is intentionally a development placeholder and is
+not connected to a production provider yet.
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+## Architecture
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+- `app/`: React UI and HTTP API routes
+- `lib/match-engine.ts`: authoritative game rules
+- `worker/`: Cloudflare Worker and Durable Object WebSocket routing
+- `db/`: D1, R2 and Durable Object bindings
+- `scripts/`: optional KataGo and Rapfi service wrappers
+- `docs/AGENT_DEPLOYMENT.md`: deployment handoff and smoke tests
 
 ## Useful Commands
 
 - `npm run dev`: start local development
+- `npm run ai`: start the optional KataGo GPU node for master-level Go
+- `npm run ai:gomoku`: start the Rapfi NNUE node for master-level Gomoku
 - `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
+- `npm test`: build the app and run rules, clock, AI and source-contract tests
 - `npm run db:generate`: generate Drizzle migrations after schema changes
+
+Production and server-migration settings for the AI node are documented in
+[`docs/ai-deployment.md`](docs/ai-deployment.md).
+
+Agents deploying the complete application must follow
+[`docs/AGENT_DEPLOYMENT.md`](docs/AGENT_DEPLOYMENT.md).
 
 ## Learn More
 

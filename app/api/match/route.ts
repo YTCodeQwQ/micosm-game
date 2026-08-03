@@ -1,0 +1,811 @@
+import { env } from "cloudflare:workers";
+import { getD1, getRoomHub } from "../../../db";
+import { avatarUrlForKey, ensureAuthSchema, getSessionUser, type AuthUser } from "../../../lib/auth";
+import { chooseBuiltInAiAction } from "../../../lib/ai-engine";
+import { ensureFriendSchema } from "../../../lib/friends";
+import { archiveFinishedMatch, ensureMatchHistorySchema } from "../../../lib/match-history";
+import { ensureRankSchema, rankChange } from "../../../lib/rank";
+import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchPlayer, type MatchState } from "../../../lib/match-engine";
+
+type RoomMode = "private" | "matchmaking" | "ranked" | "ai";
+type RoomRow = {
+  id: string;
+  game: MatchGame;
+  black_player: string;
+  white_player: string | null;
+  black_name: string | null;
+  white_name: string | null;
+  black_avatar: string | null;
+  white_avatar: string | null;
+  black_signature: string | null;
+  white_signature: string | null;
+  host_user_id: string | null;
+  guest_user_id: string | null;
+  black_user_id: string | null;
+  white_user_id: string | null;
+  mode: RoomMode | null;
+  board_size: number | null;
+  state: string;
+  version: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type QueueRow = RoomRow & { queue_key: string };
+type RankedQueueRow = RoomRow & { queue_user_id: string; queue_rating: number; queue_created_at: number; queue_player_id: string; queue_updated_at: number };
+type D1 = ReturnType<typeof getD1>;
+const ROOM_DISCONNECT_MS = 30_000;
+const RANK_SETTLEMENT_STALE_MS = 60_000;
+const AI_DIFFICULTIES: AiDifficulty[] = ["easy", "normal", "hard", "master"];
+
+function aiServiceOrigin() {
+  const configured = (env as unknown as { AI_SERVICE_ORIGIN?: string }).AI_SERVICE_ORIGIN?.trim();
+  return (configured || "http://127.0.0.1:3210").replace(/\/$/, "");
+}
+
+function aiServiceHeaders() {
+  const token = (env as unknown as { AI_SERVICE_TOKEN?: string }).AI_SERVICE_TOKEN?.trim();
+  return token ? { "content-type": "application/json", authorization: `Bearer ${token}` } : { "content-type": "application/json" };
+}
+
+function rapfiServiceOrigin() {
+  const configured = (env as unknown as { RAPFI_SERVICE_ORIGIN?: string }).RAPFI_SERVICE_ORIGIN?.trim();
+  return (configured || "http://127.0.0.1:3211").replace(/\/$/, "");
+}
+
+function rapfiServiceHeaders() {
+  const values = env as unknown as { RAPFI_SERVICE_TOKEN?: string; AI_SERVICE_TOKEN?: string };
+  const token = values.RAPFI_SERVICE_TOKEN?.trim() || values.AI_SERVICE_TOKEN?.trim();
+  return token ? { "content-type": "application/json", authorization: `Bearer ${token}` } : { "content-type": "application/json" };
+}
+
+function kataGoVisits() {
+  const configured = Number((env as unknown as { AI_KATAGO_VISITS?: string }).AI_KATAGO_VISITS);
+  return Number.isFinite(configured) ? Math.max(50, Math.min(5000, Math.round(configured))) : 3200;
+}
+
+function kataGoSeconds() {
+  const configured = Number((env as unknown as { AI_KATAGO_SECONDS?: string }).AI_KATAGO_SECONDS);
+  return Number.isFinite(configured) ? Math.max(2, Math.min(60, configured)) : 12;
+}
+
+async function kataGoAction(state: MatchState): Promise<MatchAction> {
+  const response = await fetch(`${aiServiceOrigin()}/move`, {
+    method: "POST",
+    headers: aiServiceHeaders(),
+    body: JSON.stringify({ state, visits: kataGoVisits(), maxSeconds: kataGoSeconds() }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  const data = await response.json() as { action?: MatchAction; error?: string };
+  if (!response.ok || !data.action) throw new MatchRuleError("katago_unavailable", data.error ?? "KataGo GPU 引擎暂时不可用");
+  return data.action;
+}
+
+async function ensureKataGoReady() {
+  try {
+    const response = await fetch(`${aiServiceOrigin()}/health`, { headers: aiServiceHeaders(), signal: AbortSignal.timeout(2_500) });
+    const data = await response.json() as { ready?: boolean };
+    return response.ok && data.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+function rapfiSeconds() {
+  const configured = Number((env as unknown as { AI_RAPFI_SECONDS?: string }).AI_RAPFI_SECONDS);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 5;
+}
+
+async function rapfiAction(state: MatchState): Promise<MatchAction> {
+  const maxSeconds = rapfiSeconds();
+  const response = await fetch(`${rapfiServiceOrigin()}/move`, {
+    method: "POST",
+    headers: rapfiServiceHeaders(),
+    body: JSON.stringify({ state, maxSeconds }),
+    signal: AbortSignal.timeout((maxSeconds + 8) * 1_000),
+  });
+  const data = await response.json() as { action?: MatchAction; error?: string };
+  if (!response.ok || !data.action) throw new MatchRuleError("rapfi_unavailable", data.error ?? "Rapfi NNUE 引擎暂时不可用");
+  return data.action;
+}
+
+async function ensureRapfiReady() {
+  try {
+    const response = await fetch(`${rapfiServiceOrigin()}/health`, { headers: rapfiServiceHeaders(), signal: AbortSignal.timeout(2_500) });
+    const data = await response.json() as { ready?: boolean };
+    return response.ok && data.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+async function notifyRoom(roomId: string, version?: number, type = "room_updated") {
+  try {
+    const namespace = getRoomHub();
+    const hub = namespace.get(namespace.idFromName(roomId));
+    await hub.fetch("https://room-hub/notify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type, roomId, version }),
+    });
+  } catch {
+    // D1 remains authoritative; clients retain a low-frequency recovery fetch.
+  }
+}
+
+async function ensureSchema() {
+  const d1 = getD1();
+  await d1.prepare(`CREATE TABLE IF NOT EXISTS game_rooms (
+    id TEXT PRIMARY KEY,
+    game TEXT NOT NULL,
+    black_player TEXT NOT NULL,
+    white_player TEXT,
+    black_name TEXT,
+    white_name TEXT,
+    black_avatar TEXT,
+    white_avatar TEXT,
+    black_signature TEXT,
+    white_signature TEXT,
+    host_user_id TEXT,
+    guest_user_id TEXT,
+    black_user_id TEXT,
+    white_user_id TEXT,
+    mode TEXT NOT NULL DEFAULT 'private',
+    board_size INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run();
+
+  const columns = await d1.prepare("PRAGMA table_info(game_rooms)").all<{ name: string }>();
+  const names = new Set(columns.results.map((column) => column.name));
+  const additions = [
+    ["black_name", "ALTER TABLE game_rooms ADD COLUMN black_name TEXT"],
+    ["white_name", "ALTER TABLE game_rooms ADD COLUMN white_name TEXT"],
+    ["black_avatar", "ALTER TABLE game_rooms ADD COLUMN black_avatar TEXT"],
+    ["white_avatar", "ALTER TABLE game_rooms ADD COLUMN white_avatar TEXT"],
+    ["black_signature", "ALTER TABLE game_rooms ADD COLUMN black_signature TEXT"],
+    ["white_signature", "ALTER TABLE game_rooms ADD COLUMN white_signature TEXT"],
+    ["host_user_id", "ALTER TABLE game_rooms ADD COLUMN host_user_id TEXT"],
+    ["guest_user_id", "ALTER TABLE game_rooms ADD COLUMN guest_user_id TEXT"],
+    ["black_user_id", "ALTER TABLE game_rooms ADD COLUMN black_user_id TEXT"],
+    ["white_user_id", "ALTER TABLE game_rooms ADD COLUMN white_user_id TEXT"],
+    ["mode", "ALTER TABLE game_rooms ADD COLUMN mode TEXT NOT NULL DEFAULT 'private'"],
+    ["board_size", "ALTER TABLE game_rooms ADD COLUMN board_size INTEGER NOT NULL DEFAULT 0"],
+  ] as const;
+  for (const [name, sql] of additions) {
+    if (!names.has(name)) await d1.prepare(sql).run();
+  }
+
+  await d1.prepare(`CREATE TABLE IF NOT EXISTS matchmaking_queue (
+    queue_key TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`).run();
+  await d1.prepare(`CREATE TABLE IF NOT EXISTS game_room_presence (
+    room_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    last_seen INTEGER NOT NULL,
+    UNIQUE(room_id, player_id)
+  )`).run();
+  await d1.prepare("CREATE INDEX IF NOT EXISTS game_room_presence_seen_idx ON game_room_presence(room_id, last_seen)").run();
+  await ensureAuthSchema(d1);
+  if (!names.has("black_user_id") || !names.has("white_user_id")) {
+    await d1.prepare(`UPDATE game_rooms SET
+      black_user_id = CASE
+        WHEN white_player IS NULL THEN host_user_id
+        ELSE COALESCE((SELECT id FROM users WHERE display_name = black_name LIMIT 1), black_user_id)
+      END,
+      white_user_id = CASE
+        WHEN white_player IS NULL THEN NULL
+        ELSE COALESCE((SELECT id FROM users WHERE display_name = white_name LIMIT 1), white_user_id)
+      END
+      WHERE black_user_id IS NULL OR (white_player IS NOT NULL AND white_user_id IS NULL)`).run();
+  }
+  await ensureFriendSchema(d1);
+  await ensureRankSchema(d1);
+  await ensureMatchHistorySchema(d1);
+  return d1;
+}
+
+function roomCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join("");
+}
+
+function normalizedSize(game: MatchGame, requested?: number) {
+  if (game === "go") return [9, 13, 19].includes(requested ?? 19) ? requested ?? 19 : 19;
+  return game === "gomoku" ? 15 : 8;
+}
+
+function parseState(row: RoomRow) {
+  return JSON.parse(row.state) as MatchState;
+}
+
+function roleFor(row: RoomRow, playerId: string | null, state = parseState(row)): MatchPlayer | null {
+  if (!row.white_player && playerId === row.black_player) {
+    const preference = state.hostColorPreference ?? "black";
+    return preference === "random" ? null : preference;
+  }
+  if (playerId === row.black_player) return "black";
+  if (playerId && playerId === row.white_player) return "white";
+  return null;
+}
+
+function playerIdForUser(row: RoomRow, userId: string) {
+  if (!row.white_player) return row.host_user_id === userId ? row.black_player : null;
+  if (row.black_user_id === userId) return row.black_player;
+  if (row.white_user_id === userId) return row.white_player;
+  return null;
+}
+
+function publicRoom(row: RoomRow, playerId: string | null) {
+  const storedState = parseState(row);
+  const state = storedState.clock ? projectMatchClock(storedState) : storedState;
+  const waiting = !row.white_player;
+  const preference = state.hostColorPreference ?? "black";
+  const rolePending = waiting && playerId === row.black_player && preference === "random";
+  const hostName = row.black_name ?? "玩家";
+  const players = waiting
+    ? preference === "white" ? { black: null, white: hostName } : preference === "black" ? { black: hostName, white: null } : { black: null, white: null }
+    : { black: row.black_name, white: row.white_name };
+  const hostProfile = { avatarUrl: avatarUrlForKey(row.black_avatar), signature: row.black_signature ?? "" };
+  const profiles = waiting
+    ? preference === "white" ? { black: null, white: hostProfile } : preference === "black" ? { black: hostProfile, white: null } : { black: null, white: null }
+    : {
+        black: { avatarUrl: avatarUrlForKey(row.black_avatar), signature: row.black_signature ?? "" },
+        white: { avatarUrl: avatarUrlForKey(row.white_avatar), signature: row.white_signature ?? "" },
+      };
+  return {
+    id: row.id,
+    game: row.game,
+    mode: row.mode ?? "private",
+    role: roleFor(row, playerId, state),
+    rolePending,
+    opponentReady: Boolean(row.white_player),
+    players,
+    profiles,
+    version: row.version,
+    state,
+  };
+}
+
+function errorResponse(error: unknown) {
+  if (error instanceof MatchRuleError) return Response.json({ error: { code: error.code, message: error.message } }, { status: 409 });
+  const message = error instanceof Error ? error.message : "服务器暂时无法处理请求";
+  return Response.json({ error: { code: "server_error", message } }, { status: 500 });
+}
+
+async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, mode: RoomMode, turnSeconds?: number, forbiddenMoves = false) {
+  const playerId = crypto.randomUUID();
+  const now = Date.now();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const id = roomCode();
+    const baseState = createMatchState(game, size, preference, game === "gomoku" && (mode === "ranked" || mode === "matchmaking" || forbiddenMoves));
+    const state = mode === "private" && turnSeconds ? { ...baseState, clockConfigMs: turnSeconds * 1000 } : baseState;
+    try {
+      await d1.prepare("INSERT INTO game_rooms (id, game, black_player, black_name, black_avatar, black_signature, host_user_id, black_user_id, mode, board_size, state, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
+        .bind(id, game, playerId, player.displayName, player.avatarKey, player.signature, player.id, player.id, mode, state.size, JSON.stringify(state), now, now).run();
+      await d1.prepare("INSERT INTO game_room_presence (room_id, player_id, last_seen) VALUES (?, ?, ?)").bind(id, playerId, now).run();
+      const row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+      return { row: row as RoomRow, playerId };
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+  }
+  throw new Error("无法创建房间");
+}
+
+function otherPlayer(player: MatchPlayer): MatchPlayer {
+  return player === "black" ? "white" : "black";
+}
+
+function aiDisplayName(game: MatchGame, difficulty: AiDifficulty) {
+  if (game === "go" && difficulty === "master") return "KataGo · 星神";
+  if (game === "gomoku" && difficulty === "master") return "Rapfi · 星神";
+  return difficulty === "easy" ? "星芽" : difficulty === "normal" ? "白石铃音" : difficulty === "hard" ? "藤原澪" : "无垠棋手";
+}
+
+function aiSignature(game: MatchGame, difficulty: AiDifficulty) {
+  if (game === "go" && difficulty === "master") return "b28 神经网络 · RTX GPU 搜索";
+  if (game === "gomoku" && difficulty === "master") return "mix9svq NNUE · 专业级连珠搜索";
+  return difficulty === "easy" ? "刚学会看棋盘，请多指教" : difficulty === "normal" ? "稳健练习型棋手" : difficulty === "hard" ? "高段深度搜索" : "极限深度搜索";
+}
+
+async function createAiRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, difficulty: AiDifficulty, forbiddenMoves = false) {
+  const playerId = crypto.randomUUID();
+  const aiPlayerId = crypto.randomUUID();
+  const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
+  const userIsBlack = preference === "black" || (preference === "random" && randomByte % 2 === 0);
+  const userRole: MatchPlayer = userIsBlack ? "black" : "white";
+  const aiRole = otherPlayer(userRole);
+  const engine = game === "go" && difficulty === "master" ? "katago" : game === "gomoku" && difficulty === "master" ? "rapfi" : "builtin";
+  const base = activateMatch(createMatchState(game, size, "black", game === "gomoku" && forbiddenMoves));
+  const state: MatchState = { ...base, ai: { player: aiRole, difficulty, engine }, notice: aiRole === "black" ? "AI 正在思考第一手" : "轮到你落子" };
+  const id = roomCode();
+  const now = Date.now();
+  const aiName = aiDisplayName(game, difficulty);
+  const aiBio = aiSignature(game, difficulty);
+  const blackPlayer = userIsBlack ? playerId : aiPlayerId;
+  const whitePlayer = userIsBlack ? aiPlayerId : playerId;
+  const blackName = userIsBlack ? player.displayName : aiName;
+  const whiteName = userIsBlack ? aiName : player.displayName;
+  const blackAvatar = userIsBlack ? player.avatarKey : null;
+  const whiteAvatar = userIsBlack ? null : player.avatarKey;
+  const blackSignature = userIsBlack ? player.signature : aiBio;
+  const whiteSignature = userIsBlack ? aiBio : player.signature;
+  const blackUserId = userIsBlack ? player.id : null;
+  const whiteUserId = userIsBlack ? null : player.id;
+  await d1.prepare(`INSERT INTO game_rooms (
+    id, game, black_player, white_player, black_name, white_name, black_avatar, white_avatar,
+    black_signature, white_signature, host_user_id, guest_user_id, black_user_id, white_user_id,
+    mode, board_size, state, version, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'ai', ?, ?, 0, ?, ?)`).bind(
+    id, game, blackPlayer, whitePlayer, blackName, whiteName, blackAvatar, whiteAvatar,
+    blackSignature, whiteSignature, player.id, blackUserId, whiteUserId, state.size, JSON.stringify(state), now, now,
+  ).run();
+  await d1.prepare("INSERT INTO game_room_presence (room_id, player_id, last_seen) VALUES (?, ?, ?)").bind(id, playerId, now).run();
+  const row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+  return { row: row as RoomRow, playerId };
+}
+
+function resetAiState(state: MatchState) {
+  if (!state.ai) throw new MatchRuleError("ai_state_missing", "AI 对局配置已经失效");
+  const reset = activateMatch(createMatchState(state.game, state.size, "black", state.gomokuForbidden));
+  return { ...reset, ai: state.ai, notice: state.ai.player === "black" ? "AI 正在思考第一手" : "轮到你落子" };
+}
+
+function undoAiRound(state: MatchState) {
+  if (!state.ai) throw new MatchRuleError("ai_state_missing", "AI 对局配置已经失效");
+  const moves = state.moves ?? [];
+  const keep = Math.max(0, moves.length - 2);
+  if (keep === moves.length) throw new MatchRuleError("nothing_to_undo", "当前没有可以撤销的回合");
+  let replay = resetAiState(state);
+  for (const move of moves.slice(0, keep)) {
+    const action: MatchAction = move.type === "play"
+      ? { type: "play", row: move.row, col: move.col }
+      : move.type === "pass" ? { type: "pass" } : { type: "resumeGo" };
+    replay = { ...applyMatchAction(replay, move.player, action), ai: state.ai };
+  }
+  return { ...replay, notice: "已撤销上一回合，轮到你重新落子" };
+}
+
+async function advanceAi(state: MatchState) {
+  const ai = state.ai;
+  if (!ai) throw new MatchRuleError("ai_state_missing", "AI 对局配置已经失效");
+  if (state.status === "scoring") {
+    const human = otherPlayer(ai.player);
+    const confirmations = state.goScoring?.confirmations ?? [];
+    if (confirmations.includes(human) && !confirmations.includes(ai.player)) return { ...applyMatchAction(state, ai.player, { type: "confirmScore" }), ai };
+    return state;
+  }
+  if (state.status !== "playing" || state.turn !== ai.player) return state;
+  const action = ai.engine === "katago"
+    ? await kataGoAction(state)
+    : ai.engine === "rapfi"
+      ? await rapfiAction(state)
+      : chooseBuiltInAiAction(state, ai.difficulty);
+  return { ...applyMatchAction(state, ai.player, action), ai };
+}
+
+async function claimWaitingRoom(d1: D1, row: RoomRow, guest: AuthUser) {
+  if (row.host_user_id === guest.id) return null;
+  const playerId = crypto.randomUUID();
+  const waitingState = parseState(row);
+  const preference = waitingState.hostColorPreference ?? "black";
+  const hostIsBlack = preference === "black" || (preference === "random" && crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0);
+  const blackPlayer = hostIsBlack ? row.black_player : playerId;
+  const whitePlayer = hostIsBlack ? playerId : row.black_player;
+  const hostName = row.black_name ?? "玩家1";
+  const blackName = hostIsBlack ? hostName : guest.displayName;
+  const whiteName = hostIsBlack ? guest.displayName : hostName;
+  const blackAvatar = hostIsBlack ? row.black_avatar : guest.avatarKey;
+  const whiteAvatar = hostIsBlack ? guest.avatarKey : row.black_avatar;
+  const blackSignature = hostIsBlack ? row.black_signature : guest.signature;
+  const whiteSignature = hostIsBlack ? guest.signature : row.black_signature;
+  const blackUserId = hostIsBlack ? row.host_user_id : guest.id;
+  const whiteUserId = hostIsBlack ? guest.id : row.host_user_id;
+  const now = Date.now();
+  const activeState = activateMatch(waitingState);
+  const state = (row.mode ?? "private") === "ranked"
+    ? startRankedClock(activeState, now)
+    : waitingState.clockConfigMs
+      ? startMatchClock(activeState, waitingState.clockConfigMs, now)
+      : activeState;
+  const result = await d1.prepare("UPDATE game_rooms SET black_player = ?, white_player = ?, black_name = ?, white_name = ?, black_avatar = ?, white_avatar = ?, black_signature = ?, white_signature = ?, guest_user_id = ?, black_user_id = ?, white_user_id = ?, state = ?, version = version + 1, updated_at = ? WHERE id = ? AND white_player IS NULL")
+    .bind(blackPlayer, whitePlayer, blackName, whiteName, blackAvatar, whiteAvatar, blackSignature, whiteSignature, guest.id, blackUserId, whiteUserId, JSON.stringify(state), now, row.id).run();
+  if (!result.meta.changes) return null;
+  await d1.prepare("INSERT INTO game_room_presence (room_id, player_id, last_seen) VALUES (?, ?, ?) ON CONFLICT(room_id, player_id) DO UPDATE SET last_seen = excluded.last_seen")
+    .bind(row.id, row.black_player, Date.now()).run();
+  await d1.prepare("INSERT INTO game_room_presence (room_id, player_id, last_seen) VALUES (?, ?, ?) ON CONFLICT(room_id, player_id) DO UPDATE SET last_seen = excluded.last_seen")
+    .bind(row.id, playerId, Date.now()).run();
+  const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>();
+  await notifyRoom(row.id, updated?.version);
+  return { row: updated as RoomRow, playerId, hostIsBlack };
+}
+
+type RankMatchRow = {
+  room_id: string;
+  black_user_id: string;
+  white_user_id: string;
+  black_rating_before: number;
+  white_rating_before: number;
+  black_delta: number | null;
+  white_delta: number | null;
+  black_rating_after: number | null;
+  white_rating_after: number | null;
+  status: string;
+};
+
+async function rankProfile(d1: D1, userId: string, game: "go" | "gomoku") {
+  const now = Date.now();
+  await d1.prepare("INSERT OR IGNORE INTO rank_profiles (user_id, game, rating, peak_rating, wins, losses, draws, streak, matches, updated_at) VALUES (?, ?, 0, 0, 0, 0, 0, 0, 0, ?)").bind(userId, game, now).run();
+  return await d1.prepare("SELECT rating, streak FROM rank_profiles WHERE user_id = ? AND game = ?").bind(userId, game).first<{ rating: number; streak: number }>() as { rating: number; streak: number };
+}
+
+async function createRankMatch(d1: D1, waitingRoom: RoomRow, joinedRoom: RoomRow, guest: AuthUser, hostIsBlack: boolean) {
+  if (!waitingRoom.host_user_id || (joinedRoom.game !== "go" && joinedRoom.game !== "gomoku")) throw new Error("排位房间身份无效");
+  const hostProfile = await rankProfile(d1, waitingRoom.host_user_id, joinedRoom.game);
+  const guestProfile = await rankProfile(d1, guest.id, joinedRoom.game);
+  const blackUserId = hostIsBlack ? waitingRoom.host_user_id : guest.id;
+  const whiteUserId = hostIsBlack ? guest.id : waitingRoom.host_user_id;
+  const blackRating = hostIsBlack ? hostProfile.rating : guestProfile.rating;
+  const whiteRating = hostIsBlack ? guestProfile.rating : hostProfile.rating;
+  await d1.prepare("INSERT INTO rank_matches (room_id, game, black_user_id, white_user_id, black_rating_before, white_rating_before, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)")
+    .bind(joinedRoom.id, joinedRoom.game, blackUserId, whiteUserId, blackRating, whiteRating, Date.now()).run();
+}
+
+async function settleRankedMatch(d1: D1, row: RoomRow, state: MatchState) {
+  if ((row.mode ?? "private") !== "ranked" || state.status !== "ended" || !state.winner) return;
+  const match = await d1.prepare("SELECT room_id, black_user_id, white_user_id, black_rating_before, white_rating_before, black_delta, white_delta, black_rating_after, white_rating_after, status FROM rank_matches WHERE room_id = ?")
+    .bind(row.id).first<RankMatchRow>();
+  if (!match || match.status === "settled") return;
+  const claimTime = Date.now();
+  const claimed = await d1.prepare(`UPDATE rank_matches
+    SET status = 'settling', settled_at = ?
+    WHERE room_id = ? AND (
+      status = 'active' OR
+      (status = 'settling' AND (settled_at IS NULL OR settled_at < ?))
+    )`).bind(claimTime, row.id, claimTime - RANK_SETTLEMENT_STALE_MS).run();
+  if (!claimed.meta.changes) return;
+  try {
+    const game = row.game as "go" | "gomoku";
+    const blackProfile = await rankProfile(d1, match.black_user_id, game);
+    const whiteProfile = await rankProfile(d1, match.white_user_id, game);
+    const draw = state.winner === "draw";
+    const blackWon = state.winner === "black";
+    const blackDelta = draw ? 0 : rankChange(match.black_rating_before, match.white_rating_before, blackWon, blackProfile.streak);
+    const whiteDelta = draw ? 0 : rankChange(match.white_rating_before, match.black_rating_before, !blackWon, whiteProfile.streak);
+    const blackAfter = Math.max(0, match.black_rating_before + blackDelta);
+    const whiteAfter = Math.max(0, match.white_rating_before + whiteDelta);
+    const now = Date.now();
+    await d1.batch([
+      d1.prepare("UPDATE rank_profiles SET rating = ?, peak_rating = MAX(peak_rating, ?), wins = wins + ?, losses = losses + ?, draws = draws + ?, streak = ?, matches = matches + 1, updated_at = ? WHERE user_id = ? AND game = ?")
+        .bind(blackAfter, blackAfter, !draw && blackWon ? 1 : 0, !draw && !blackWon ? 1 : 0, draw ? 1 : 0, draw ? 0 : blackWon ? blackProfile.streak + 1 : 0, now, match.black_user_id, game),
+      d1.prepare("UPDATE rank_profiles SET rating = ?, peak_rating = MAX(peak_rating, ?), wins = wins + ?, losses = losses + ?, draws = draws + ?, streak = ?, matches = matches + 1, updated_at = ? WHERE user_id = ? AND game = ?")
+        .bind(whiteAfter, whiteAfter, !draw && !blackWon ? 1 : 0, !draw && blackWon ? 1 : 0, draw ? 1 : 0, draw ? 0 : !blackWon ? whiteProfile.streak + 1 : 0, now, match.white_user_id, game),
+      d1.prepare("UPDATE rank_matches SET black_delta = ?, white_delta = ?, black_rating_after = ?, white_rating_after = ?, result = ?, status = 'settled', settled_at = ? WHERE room_id = ? AND status = 'settling' AND settled_at = ?")
+        .bind(blackDelta, whiteDelta, blackAfter, whiteAfter, state.winner, now, row.id, claimTime),
+    ]);
+  } catch (error) {
+    await d1.prepare("UPDATE rank_matches SET status = 'active', settled_at = NULL WHERE room_id = ? AND status = 'settling' AND settled_at = ?")
+      .bind(row.id, claimTime).run();
+    throw error;
+  }
+}
+
+async function settleAndArchiveMatch(d1: D1, row: RoomRow, state: MatchState) {
+  await settleRankedMatch(d1, row, state);
+  await archiveFinishedMatch(d1, row, state);
+}
+
+async function publicRoomWithRank(d1: D1, row: RoomRow, playerId: string | null, userId: string) {
+  const room = publicRoom(row, playerId);
+  if ((row.mode ?? "private") !== "ranked") return room;
+  const match = await d1.prepare("SELECT black_user_id, white_user_id, black_delta, white_delta, black_rating_after, white_rating_after, status FROM rank_matches WHERE room_id = ?")
+    .bind(row.id).first<RankMatchRow>();
+  if (!match || match.status !== "settled") return { ...room, rankResult: null };
+  const isBlack = match.black_user_id === userId;
+  return {
+    ...room,
+    rankResult: {
+      delta: isBlack ? match.black_delta ?? 0 : match.white_delta ?? 0,
+      rating: isBlack ? match.black_rating_after ?? 0 : match.white_rating_after ?? 0,
+    },
+  };
+}
+
+async function resolveMatchTimeout(d1: D1, row: RoomRow) {
+  const storedState = parseState(row);
+  if (storedState.status !== "playing" || !storedState.clock) return row;
+  const next = projectMatchClock(storedState);
+  if (next.status === "playing") return row;
+  const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?")
+    .bind(JSON.stringify(next), Date.now(), row.id, row.version).run();
+  if (!result.meta.changes) {
+    return await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
+  }
+  const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
+  await settleAndArchiveMatch(d1, updated, next);
+  await notifyRoom(row.id, updated.version);
+  return updated;
+}
+
+async function heartbeatAndResolveDeparture(d1: D1, row: RoomRow, playerId: string | null) {
+  const role = roleFor(row, playerId);
+  if (!role || !playerId) return row;
+  const now = Date.now();
+  await d1.prepare(`INSERT INTO game_room_presence (room_id, player_id, last_seen) VALUES (?, ?, ?)
+    ON CONFLICT(room_id, player_id) DO UPDATE SET last_seen = CASE WHEN last_seen < ? THEN excluded.last_seen ELSE last_seen END`)
+    .bind(row.id, playerId, now, now - 5_000).run();
+  const state = parseState(row);
+  if ((row.mode ?? "private") === "ai") return row;
+  if (!row.white_player || state.status !== "playing") return row;
+  const opponentRole: MatchPlayer = role === "black" ? "white" : "black";
+  const opponentId = opponentRole === "black" ? row.black_player : row.white_player;
+  if (!opponentId) return row;
+  const presence = await d1.prepare("SELECT last_seen FROM game_room_presence WHERE room_id = ? AND player_id = ?")
+    .bind(row.id, opponentId).first<{ last_seen: number }>();
+  if (presence && presence.last_seen >= now - ROOM_DISCONNECT_MS) return row;
+  const next: MatchState = {
+    ...state,
+    status: "ended",
+    winner: role,
+    departedPlayer: opponentRole,
+    undoRequest: null,
+    notice: `${opponentRole === "black" ? "黑方" : "白方"}失去连接，${role === "black" ? "黑方" : "白方"}获胜`,
+  };
+  const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?")
+    .bind(JSON.stringify(next), now, row.id, row.version).run();
+  if (!result.meta.changes) return await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
+  const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(row.id).first<RoomRow>() as RoomRow;
+  await settleAndArchiveMatch(d1, updated, next);
+  await notifyRoom(row.id, updated.version);
+  return updated;
+}
+
+export async function GET(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const id = url.searchParams.get("roomId")?.trim().toUpperCase();
+    if (!id) return Response.json({ error: { code: "missing_room", message: "请输入邀请码" } }, { status: 400 });
+    const d1 = await ensureSchema();
+    const sessionUser = await getSessionUser(request, d1);
+    if (!sessionUser) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
+    let row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+    if (!row) return Response.json({ error: { code: "room_not_found", message: "没有找到这个对局" } }, { status: 404 });
+    const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
+    row = await resolveMatchTimeout(d1, row);
+    row = await heartbeatAndResolveDeparture(d1, row, authenticatedPlayerId);
+    if (["matchmaking", "ranked"].includes(row.mode ?? "private") && !row.white_player && authenticatedPlayerId === row.black_player && row.updated_at < Date.now() - 5000) {
+      const now = Date.now();
+      await d1.prepare("UPDATE game_rooms SET updated_at = ? WHERE id = ? AND white_player IS NULL").bind(now, id).run();
+      if (row.mode === "ranked") await d1.prepare("UPDATE ranked_queue SET updated_at = ? WHERE room_id = ?").bind(now, id).run();
+    }
+    return Response.json({ room: await publicRoomWithRank(d1, row, authenticatedPlayerId, sessionUser.id) });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; turnSeconds?: number; clockMinutes?: number; forbiddenMoves?: boolean; roomId?: string; playerId?: string; action?: MatchAction };
+    const d1 = await ensureSchema();
+    const sessionUser = await getSessionUser(request, d1);
+    if (!sessionUser) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
+
+    if (payload.type === "createAI") {
+      if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return Response.json({ error: { code: "invalid_game", message: "当前游戏暂不支持人机对战" } }, { status: 400 });
+      const difficulty = AI_DIFFICULTIES.includes(payload.aiDifficulty ?? "normal") ? payload.aiDifficulty ?? "normal" : "normal";
+      const preference: ColorPreference = ["black", "white", "random"].includes(payload.colorPreference ?? "black") ? payload.colorPreference ?? "black" : "black";
+      if (payload.game === "go" && difficulty === "master" && !(await ensureKataGoReady())) {
+        return Response.json({ error: { code: "katago_unavailable", message: "最高难度需要先启动本机 KataGo GPU 服务" } }, { status: 503 });
+      }
+      if (payload.game === "gomoku" && difficulty === "master" && !(await ensureRapfiReady())) {
+        return Response.json({ error: { code: "rapfi_unavailable", message: "最高难度需要先启动本机 Rapfi NNUE 服务" } }, { status: 503 });
+      }
+      const created = await createAiRoom(d1, payload.game, normalizedSize(payload.game, payload.size), preference, sessionUser, difficulty, payload.forbiddenMoves === true);
+      return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
+    }
+
+    if (payload.type === "rankmake") {
+      if (!payload.game || !["go", "gomoku"].includes(payload.game)) return Response.json({ error: { code: "ranked_game_unavailable", message: "当前游戏不参与排位" } }, { status: 400 });
+      const game = payload.game as "go" | "gomoku";
+      const size = game === "go" ? 19 : 15;
+      const activeMatch = await d1.prepare("SELECT room_id FROM rank_matches WHERE status IN ('active', 'settling') AND (black_user_id = ? OR white_user_id = ?) LIMIT 1").bind(sessionUser.id, sessionUser.id).first<{ room_id: string }>();
+      if (activeMatch) return Response.json({ error: { code: "ranked_match_active", message: "你已经有一场进行中的排位对局" } }, { status: 409 });
+      const existing = await d1.prepare("SELECT q.user_id AS queue_user_id, q.rating AS queue_rating, q.created_at AS queue_created_at, q.player_id AS queue_player_id, q.updated_at AS queue_updated_at, r.* FROM ranked_queue q JOIN game_rooms r ON r.id = q.room_id WHERE q.user_id = ?")
+        .bind(sessionUser.id).first<RankedQueueRow>();
+      if (existing && existing.queue_updated_at >= Date.now() - 20_000) return Response.json({ room: await publicRoomWithRank(d1, existing, existing.queue_player_id, sessionUser.id), playerId: existing.queue_player_id });
+      if (existing) {
+        await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ?").bind(sessionUser.id).run();
+        await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(existing.id).run();
+      }
+
+      const profile = await rankProfile(d1, sessionUser.id, game);
+      const now = Date.now();
+      const candidates = await d1.prepare(`SELECT q.user_id AS queue_user_id, q.rating AS queue_rating, q.created_at AS queue_created_at, q.player_id AS queue_player_id, q.updated_at AS queue_updated_at, r.*
+        FROM ranked_queue q JOIN game_rooms r ON r.id = q.room_id
+        WHERE q.game = ? AND q.board_size = ? AND q.user_id != ?
+        ORDER BY ABS(q.rating - ?) ASC, q.created_at ASC LIMIT 20`).bind(game, size, sessionUser.id, profile.rating).all<RankedQueueRow>();
+      for (const queued of candidates.results) {
+        if (queued.queue_updated_at < now - 20_000) {
+          await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ? AND room_id = ?").bind(queued.queue_user_id, queued.id).run();
+          await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(queued.id).run();
+          continue;
+        }
+        const searchWindow = Math.min(400, 100 + Math.floor((now - queued.queue_created_at) / 10_000) * 50);
+        if (Math.abs(queued.queue_rating - profile.rating) > searchWindow) continue;
+        const joined = await claimWaitingRoom(d1, queued, sessionUser);
+        if (!joined) continue;
+        await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ? AND room_id = ?").bind(queued.queue_user_id, queued.id).run();
+        await createRankMatch(d1, queued, joined.row, sessionUser, joined.hostIsBlack);
+        return Response.json({ room: await publicRoomWithRank(d1, joined.row, joined.playerId, sessionUser.id), playerId: joined.playerId });
+      }
+
+      const created = await createWaitingRoom(d1, game, size, "random", sessionUser, "ranked");
+      await d1.prepare("INSERT INTO ranked_queue (user_id, room_id, player_id, game, board_size, rating, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(sessionUser.id, created.row.id, created.playerId, game, size, profile.rating, now, now).run();
+      return Response.json({ room: await publicRoomWithRank(d1, created.row, created.playerId, sessionUser.id), playerId: created.playerId }, { status: 201 });
+    }
+
+    if (payload.type === "create" || payload.type === "matchmake") {
+      if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return Response.json({ error: { code: "invalid_game", message: "当前游戏不支持双人对局" } }, { status: 400 });
+      const size = normalizedSize(payload.game, payload.size);
+
+      if (payload.type === "create") {
+        const colorPreference: ColorPreference = payload.game === "reversi" ? "black" : ["black", "white", "random"].includes(payload.colorPreference ?? "black") ? payload.colorPreference ?? "black" : "black";
+        const turnSeconds = payload.turnSeconds ?? (payload.clockMinutes ? payload.clockMinutes * 60 : undefined);
+        if (turnSeconds !== undefined && (!Number.isInteger(turnSeconds) || turnSeconds < 5 || turnSeconds > 600)) {
+          return Response.json({ error: { code: "invalid_clock", message: "每手用时需要设置为 5 至 600 秒" } }, { status: 400 });
+        }
+        const created = await createWaitingRoom(d1, payload.game, size, colorPreference, sessionUser, "private", turnSeconds, payload.forbiddenMoves === true);
+        return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
+      }
+
+      const queueKey = `${payload.game}:${size}`;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const queued = await d1.prepare("SELECT q.queue_key, r.* FROM matchmaking_queue q JOIN game_rooms r ON r.id = q.room_id WHERE q.queue_key = ?").bind(queueKey).first<QueueRow>();
+        if (queued) {
+          if (queued.updated_at < Date.now() - 15000) {
+            await d1.prepare("DELETE FROM matchmaking_queue WHERE queue_key = ? AND room_id = ?").bind(queueKey, queued.id).run();
+            await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(queued.id).run();
+            continue;
+          }
+          if (queued.host_user_id === sessionUser.id) {
+            return Response.json({ room: publicRoom(queued, queued.black_player), playerId: queued.black_player });
+          }
+          const joined = await claimWaitingRoom(d1, queued, sessionUser);
+          await d1.prepare("DELETE FROM matchmaking_queue WHERE queue_key = ? AND room_id = ?").bind(queueKey, queued.id).run();
+          if (joined) return Response.json({ room: publicRoom(joined.row, joined.playerId), playerId: joined.playerId });
+          continue;
+        }
+
+        const created = await createWaitingRoom(d1, payload.game, size, "random", sessionUser, "matchmaking");
+        const queuedResult = await d1.prepare("INSERT OR IGNORE INTO matchmaking_queue (queue_key, room_id, created_at) VALUES (?, ?, ?)").bind(queueKey, created.row.id, Date.now()).run();
+        if (queuedResult.meta.changes) return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
+        await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(created.row.id).run();
+      }
+      return Response.json({ error: { code: "matchmaking_busy", message: "匹配队列正在更新，请再试一次" } }, { status: 409 });
+    }
+
+    const id = payload.roomId?.trim().toUpperCase();
+    if (!id) return Response.json({ error: { code: "missing_room", message: "请输入邀请码" } }, { status: 400 });
+    let row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+    if (!row) return Response.json({ error: { code: "room_not_found", message: "没有找到这个对局" } }, { status: 404 });
+
+    if (payload.type === "join") {
+      if (row.host_user_id === sessionUser.id) return Response.json({ error: { code: "cannot_join_own_room", message: "不能加入自己创建的房间，请使用另一个账号测试" } }, { status: 409 });
+      if ((row.mode ?? "private") !== "private") return Response.json({ error: { code: "not_private_room", message: "这个对局不能通过邀请码加入" } }, { status: 409 });
+      if (row.white_player) return Response.json({ error: { code: "room_full", message: "这个房间已经满员" } }, { status: 409 });
+      const joined = await claimWaitingRoom(d1, row, sessionUser);
+      if (!joined) return Response.json({ error: { code: "room_full", message: "这个房间刚刚被其他玩家加入" } }, { status: 409 });
+      const now = Date.now();
+      await d1.prepare("UPDATE game_invites SET status = CASE WHEN invitee_id = ? THEN 'accepted' ELSE 'cancelled' END, updated_at = ? WHERE room_id = ? AND status = 'pending'")
+        .bind(sessionUser.id, now, id).run();
+      return Response.json({ room: publicRoom(joined.row, joined.playerId), playerId: joined.playerId });
+    }
+
+    row = await resolveMatchTimeout(d1, row);
+
+    if (payload.type === "cancelMatchmaking") {
+      const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
+      const playerRole = roleFor(row, authenticatedPlayerId);
+      const ownsWaitingRoom = !row.white_player && row.black_player === authenticatedPlayerId;
+      if ((row.mode ?? "private") === "ranked") {
+        if (!ownsWaitingRoom || !row.host_user_id || row.host_user_id !== sessionUser.id) return Response.json({ error: { code: "cannot_cancel", message: "无法取消这个排位匹配" } }, { status: 403 });
+        await d1.prepare("DELETE FROM ranked_queue WHERE room_id = ? AND user_id = ?").bind(id, sessionUser.id).run();
+        await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(id).run();
+        return Response.json({ cancelled: true });
+      }
+      if ((row.mode ?? "private") !== "matchmaking" || (!playerRole && !ownsWaitingRoom)) return Response.json({ error: { code: "cannot_cancel", message: "无法取消这个匹配" } }, { status: 403 });
+      if (row.white_player) return Response.json({ room: publicRoom(row, authenticatedPlayerId), cancelled: false });
+      await d1.prepare("DELETE FROM matchmaking_queue WHERE room_id = ?").bind(id).run();
+      const result = await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND black_player = ? AND white_player IS NULL").bind(id, authenticatedPlayerId).run();
+      if (result.meta.changes) return Response.json({ cancelled: true });
+      const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+      return Response.json({ room: updated ? publicRoom(updated, authenticatedPlayerId) : null, cancelled: !updated });
+    }
+
+    if (payload.type === "leave") {
+      const playerId = playerIdForUser(row, sessionUser.id) ?? "";
+      if ((row.mode ?? "private") === "ai") {
+        if (!playerId) return Response.json({ error: { code: "not_a_player", message: "你不是这个人机对局的玩家" } }, { status: 403 });
+        const role = roleFor(row, playerId);
+        const current = parseState(row);
+        if (role && ["playing", "scoring"].includes(current.status)) {
+          const next = applyMatchAction(current, role, { type: "resign" });
+          const now = Date.now();
+          await archiveFinishedMatch(d1, { ...row, version: row.version + 1, updated_at: now }, next);
+        }
+        await d1.prepare("DELETE FROM game_room_presence WHERE room_id = ?").bind(id).run();
+        await d1.prepare("DELETE FROM game_rooms WHERE id = ?").bind(id).run();
+        return Response.json({ left: true });
+      }
+      if (!row.white_player && row.black_player === playerId) {
+        await notifyRoom(id, row.version, "room_closed");
+        await d1.prepare("DELETE FROM matchmaking_queue WHERE room_id = ?").bind(id).run();
+        await d1.prepare("DELETE FROM ranked_queue WHERE room_id = ?").bind(id).run();
+        await d1.prepare("UPDATE game_invites SET status = 'cancelled', updated_at = ? WHERE room_id = ? AND status = 'pending'").bind(Date.now(), id).run();
+        await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND black_player = ? AND white_player IS NULL").bind(id, playerId).run();
+        return Response.json({ left: true });
+      }
+      const role = roleFor(row, playerId);
+      if (!role) return Response.json({ error: { code: "not_a_player", message: "你不是这个对局的玩家" } }, { status: 403 });
+      const state = parseState(row);
+      if (state.status === "ended") return Response.json({ left: true });
+      const winner: MatchPlayer = role === "black" ? "white" : "black";
+      const next: MatchState = { ...state, status: "ended", winner, departedPlayer: role, undoRequest: null, notice: `${role === "black" ? "黑方" : "白方"}逃跑，${winner === "black" ? "黑方" : "白方"}获胜` };
+      const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?").bind(JSON.stringify(next), Date.now(), id, row.version).run();
+      if (!result.meta.changes) return Response.json({ error: { code: "version_conflict", message: "房间状态刚刚更新，请重试" } }, { status: 409 });
+      const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>() as RoomRow;
+      await settleAndArchiveMatch(d1, updated, next);
+      await notifyRoom(id, updated.version);
+      return Response.json({ left: true });
+    }
+
+    if (payload.type === "aiMove") {
+      if ((row.mode ?? "private") !== "ai") return Response.json({ error: { code: "not_ai_room", message: "当前不是人机对局" } }, { status: 409 });
+      const playerId = playerIdForUser(row, sessionUser.id) ?? "";
+      if (!playerId || !roleFor(row, playerId)) return Response.json({ error: { code: "not_a_player", message: "你不是这个人机对局的玩家" } }, { status: 403 });
+      const current = parseState(row);
+      const next = await advanceAi(current);
+      if (next === current) return Response.json({ room: publicRoom(row, playerId) });
+      const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?").bind(JSON.stringify(next), Date.now(), id, row.version).run();
+      if (!result.meta.changes) return Response.json({ error: { code: "version_conflict", message: "棋局刚刚更新，AI 将重新计算" } }, { status: 409 });
+      const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>() as RoomRow;
+      await settleAndArchiveMatch(d1, updated, next);
+      return Response.json({ room: publicRoom(updated, playerId) });
+    }
+
+    if (payload.type === "action") {
+      const playerId = playerIdForUser(row, sessionUser.id) ?? "";
+      const role = roleFor(row, playerId);
+      if (!role) return Response.json({ error: { code: "not_a_player", message: "你不是这个对局的玩家" } }, { status: 403 });
+      if (!row.white_player) return Response.json({ error: { code: "waiting_for_opponent", message: "等待另一位玩家加入" } }, { status: 409 });
+      if (!payload.action) return Response.json({ error: { code: "missing_action", message: "缺少棋局操作" } }, { status: 400 });
+      if ((row.mode ?? "private") === "ranked" && !["play", "pass", "markDead", "confirmScore", "resumeGo", "resign"].includes(payload.action.type)) return Response.json({ error: { code: "ranked_action_forbidden", message: "排位对局不能悔棋或重开" } }, { status: 409 });
+      const storedState = parseState(row);
+      const currentState = storedState.clock ? projectMatchClock(storedState) : storedState;
+      let next: MatchState;
+      if ((row.mode ?? "private") === "ai" && payload.action.type === "requestUndo") next = undoAiRound(currentState);
+      else if ((row.mode ?? "private") === "ai" && ["requestRematch", "reset"].includes(payload.action.type)) next = resetAiState(currentState);
+      else if ((row.mode ?? "private") === "ai" && ["cancelUndo", "respondUndo", "cancelRematch", "respondRematch"].includes(payload.action.type)) {
+        return Response.json({ error: { code: "ai_action_unavailable", message: "人机对局不需要等待对手确认" } }, { status: 409 });
+      } else next = applyMatchAction(currentState, role, payload.action);
+      const result = await d1.prepare("UPDATE game_rooms SET state = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?").bind(JSON.stringify(next), Date.now(), id, row.version).run();
+      if (!result.meta.changes) return Response.json({ error: { code: "version_conflict", message: "棋局刚刚更新，请重试这一步" } }, { status: 409 });
+      const updated = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
+      await settleAndArchiveMatch(d1, updated as RoomRow, next);
+      await notifyRoom(id, updated?.version);
+      return Response.json({ room: await publicRoomWithRank(d1, updated as RoomRow, playerId, sessionUser.id) });
+    }
+
+    return Response.json({ error: { code: "invalid_request", message: "无法识别这个请求" } }, { status: 400 });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}

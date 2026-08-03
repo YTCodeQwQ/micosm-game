@@ -31,6 +31,10 @@ const localBindingConfig = {
         },
       ]
     : [],
+  durable_objects: {
+    bindings: [{ name: "ROOM_HUB", class_name: "GameRoomHub" }],
+  },
+  migrations: [{ tag: "v1", new_sqlite_classes: ["GameRoomHub"] }],
 };
 
 export default defineConfig(async () => {
@@ -44,9 +48,13 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      host: "0.0.0.0",
+      allowedHosts: [".ngrok-free.dev", "micosm.fun", ".micosm.fun"],
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),
