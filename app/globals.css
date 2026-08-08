@@ -1458,6 +1458,7 @@ body[data-theme="dark"] {
 .mobile-match-players { display: none; }
 .mobile-match-menu-trigger, .mobile-actions-head, .mobile-action-scrim, .mobile-reset-action { display: none; }
 .mobile-primary-nav, .mobile-game-home, .mobile-world-channel { display: none; }
+.mobile-display-trigger, .mobile-app-action, .mobile-install-guide { display: none; }
 .desktop-home-shell { display: contents; }
 .app-primary-content { display: contents; }
 .mobile-account-header { display: none; }
@@ -1482,6 +1483,7 @@ body[data-theme="dark"] {
   .header-actions { gap: 4px; }
   .header-actions .icon-button, .profile { width: 36px; height: 36px; border-radius: 11px; }
   .header-actions > .notification-trigger:nth-child(1), .header-actions > .notification-trigger:nth-child(2), .header-actions > .profile { display: none; }
+  .mobile-display-trigger { display: block; }
   .notification-trigger > b { top: -3px; right: -3px; }
   .topbar .main-nav { display: none; }
   .mobile-primary-nav {
@@ -1658,6 +1660,12 @@ body[data-theme="dark"] {
   .mobile-page-open .account-summary p { margin-top: 8px; color: rgba(255,255,255,.7); font-size: 9px; }
   .mobile-page-open .account-summary > svg { color: #f2d38c; }
   .mobile-page-open .account-popover > button { min-height: 58px; margin-top: 8px; padding: 0 15px; border: 1px solid rgba(72,106,130,.1); border-radius: 14px; background: #fff; color: #4c697d; font-size: 11px; box-shadow: 0 6px 17px rgba(44,69,89,.06); }
+  .mobile-page-open .account-popover > button.mobile-app-action { display: flex; }
+  .mobile-page-open .account-popover > button.mobile-app-action:disabled { cursor: default; opacity: .62; }
+  .mobile-install-guide { display: grid; min-height: 66px; grid-template-columns: 24px minmax(0,1fr) 30px; align-items: start; gap: 8px; margin-top: 7px; padding: 11px; border: 1px solid rgba(54,127,137,.16); border-radius: 12px; background: #eaf5f5; color: #356a72; }
+  .mobile-install-guide > svg { margin-top: 1px; }
+  .mobile-install-guide p { margin: 0; font-size: 10px; line-height: 1.6; }
+  .mobile-install-guide button { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 9px; background: rgba(255,255,255,.72); color: #547783; }
   .mobile-page-open .account-popover > button:last-child { margin-top: auto; border-color: rgba(170,82,73,.12); background: #fff7f6; color: #a0524a; }
   .mobile-account-page-open > .topbar { min-height: 42px; padding: 3px 6px; border-radius: 13px; }
   .mobile-account-page-open > .topbar .brand { gap: 7px; }
@@ -1673,6 +1681,7 @@ body[data-theme="dark"] {
   .mobile-account-page-open .account-summary small { margin-top: 4px; }
   .mobile-account-page-open .account-summary p { margin-top: 5px; }
   .mobile-account-page-open .account-popover > button { min-height: 46px; margin-top: 5px; padding: 0 13px; border-radius: 11px; font-size: 10px; box-shadow: 0 4px 12px rgba(44,69,89,.045); }
+  .mobile-account-page-open .mobile-install-guide { min-height: 58px; margin-top: 5px; padding: 9px 10px; }
   .mobile-account-page-open .account-popover > button:last-child { margin-top: 5px; }
 
   .mobile-page-open > .chat-panel.world-lobby-panel { display: none; }

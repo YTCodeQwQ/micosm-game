@@ -53,6 +53,31 @@ test("applies the comfortable readability sizing pass", async () => {
   assert.match(styles, /\.mobile-account-page-open \.account-summary strong \{ font-size: 15px; \}/);
 });
 
+test("offers mobile fullscreen and installable home-screen support", async () => {
+  const [page, layout, manifest, worker, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/manifest.ts", import.meta.url), "utf8"),
+    readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(layout, /manifest: "\/manifest\.webmanifest"/);
+  assert.match(layout, /appleWebApp/);
+  assert.match(layout, /hostname\.startsWith\("192\.168\."\)/);
+  assert.match(layout, /isLocalHost \? "http" : "https"/);
+  assert.match(manifest, /display: "standalone"/);
+  assert.match(manifest, /micosm-app-icon-192\.png/);
+  assert.match(manifest, /micosm-app-icon-512\.png/);
+  assert.match(page, /beforeinstallprompt/);
+  assert.match(page, /navigator\.serviceWorker\.register\("\/sw\.js"\)/);
+  assert.match(page, /requestFullscreen/);
+  assert.match(page, /添加到手机桌面/);
+  assert.match(page, /mobile-display-trigger/);
+  assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
+  assert.match(styles, /\.mobile-install-guide/);
+});
+
 test("keeps standard boards, profiles, friends, and room multiplayer behavior in source", async () => {
   const [page, layout, route, engine, authRoute, auth, profileRoute, avatarRoute, friendsRoute, friends, chatRoute, chat, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

@@ -19,6 +19,7 @@ import {
   CircleDot,
   Clock3,
   Copy,
+  Download,
   Gamepad2,
   Flag,
   Globe2,
@@ -29,6 +30,8 @@ import {
   LogOut,
   Moon,
   MessageCircle,
+  Maximize2,
+  Minimize2,
   MoreHorizontal,
   Pause,
   Pencil,
@@ -104,6 +107,10 @@ type MatchReview = { frames: ReviewFrame[]; index: number; outcome: MatchOutcome
 type ConfirmIntent = "leave" | "reset" | "resign" | null;
 type ConnectionState = "idle" | "online" | "reconnecting";
 type ToastTone = "info" | "success" | "warning";
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 type PlayerProfile = { avatarUrl: string | null; signature: string };
 type AuthUser = PlayerProfile & { id: string; publicId: string; phone: string; displayName: string; avatarKey: string | null; hasPassword: boolean };
 type GamePreferences = {
@@ -588,6 +595,10 @@ export default function HomePage() {
   const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
   const [authInviteCode, setAuthInviteCode] = useState("");
   const [accountOpen, setAccountOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installGuide, setInstallGuide] = useState("");
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [friendPanelOpen, setFriendPanelOpen] = useState(false);
   const [friendTab, setFriendTab] = useState<FriendTab>("friends");
@@ -1015,6 +1026,41 @@ export default function HomePage() {
     document.body.dataset.theme = preferences.appearance;
     return () => { delete document.body.dataset.theme; };
   }, [preferences.appearance]);
+
+  useEffect(() => {
+    const standaloneQuery = window.matchMedia("(display-mode: standalone)");
+    const updateStandalone = () => {
+      const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+      setIsStandalone(standaloneQuery.matches || navigatorWithStandalone.standalone === true);
+    };
+    const handleInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => {
+      setInstallPrompt(null);
+      setInstallGuide("");
+      setIsStandalone(true);
+      showToast("Micosm Game 已添加到手机桌面", "success");
+    };
+    const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+
+    updateStandalone();
+    window.addEventListener("beforeinstallprompt", handleInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    standaloneQuery.addEventListener?.("change", updateStandalone);
+    if ("serviceWorker" in navigator && window.isSecureContext) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      standaloneQuery.removeEventListener?.("change", updateStandalone);
+    };
+  }, []);
 
   useEffect(() => {
     if (ready) window.localStorage.setItem("micosm-settings", JSON.stringify({ ...preferences, boardScale }));
@@ -2064,6 +2110,52 @@ export default function HomePage() {
     setActiveGame(game);
   }
 
+  async function toggleBrowserFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+        return;
+      }
+      showToast("当前浏览器不支持网页全屏，可从“我的”添加到桌面后运行", "warning");
+    } catch {
+      showToast("浏览器没有允许全屏，请从“我的”添加到桌面后运行", "warning");
+    }
+  }
+
+  async function installMobileApp() {
+    if (isStandalone) return showToast("Micosm Game 已经从手机桌面运行", "success");
+    if (installPrompt) {
+      try {
+        await installPrompt.prompt();
+        const choice = await installPrompt.userChoice;
+        setInstallPrompt(null);
+        if (choice.outcome === "accepted") {
+          setInstallGuide("");
+          return;
+        }
+      } catch {
+        setInstallPrompt(null);
+      }
+    }
+
+    const userAgent = navigator.userAgent;
+    const isWechat = /MicroMessenger/i.test(userAgent);
+    const isAppleMobile = /iPhone|iPad|iPod/i.test(userAgent);
+    const guide = !window.isSecureContext
+      ? "当前是局域网 HTTP 测试地址。请打开浏览器菜单，选择“添加到手机”或“添加到主屏幕”；正式 HTTPS 地址可直接安装。"
+      : isWechat
+        ? "请点微信右上角菜单，选择“在浏览器打开”，再从浏览器菜单添加到手机桌面。"
+        : isAppleMobile
+          ? "请在 Safari 点底部“分享”，再选择“添加到主屏幕”。"
+          : "请打开浏览器菜单，选择“安装应用”或“添加到主屏幕”。";
+    setInstallGuide(guide);
+    showToast("请按照“我的”页面下方提示添加到桌面");
+  }
+
   async function copyInviteCode() {
     if (!room) return;
     try {
@@ -2320,6 +2412,7 @@ export default function HomePage() {
             {notifications.length > 0 && <b>{Math.min(notifications.length, 9)}</b>}
           </span>
           <IconButton label={preferences.appearance === "dark" ? "切换明亮外观" : "切换夜间外观"} onClick={() => updatePreference("appearance", preferences.appearance === "dark" ? "light" : "dark")}>{preferences.appearance === "dark" ? <Sun size={18} /> : <Moon size={18} />}</IconButton>
+          <span className="mobile-display-trigger"><IconButton label={isFullscreen ? "退出全屏" : "进入全屏"} onClick={() => void toggleBrowserFullscreen()}>{isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</IconButton></span>
           <button aria-expanded={accountOpen} className="profile" onClick={() => { setAccountOpen((open) => !open); setChatOpen(false); setNotificationOpen(false); setLibraryMenuOpen(false); }} type="button" aria-label="个人中心"><UserAvatar name={authUser?.displayName ?? displayName} src={authUser?.avatarUrl} /></button>
         </div>
       </header>
@@ -2426,6 +2519,9 @@ export default function HomePage() {
           <button onClick={openProfileEditor} type="button"><Pencil size={16} />编辑个人资料</button>
           <button onClick={openHistoryView} type="button"><Clock3 size={16} />对局记录</button>
           <button onClick={openSettings} type="button"><Settings2 size={16} />游戏设置</button>
+          <button className="mobile-app-action" onClick={() => void toggleBrowserFullscreen()} type="button">{isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{isFullscreen ? "退出浏览器全屏" : "进入浏览器全屏"}</button>
+          <button className="mobile-app-action" disabled={isStandalone} onClick={() => void installMobileApp()} type="button">{isStandalone ? <Check size={16} /> : <Download size={16} />}{isStandalone ? "已从手机桌面启动" : "添加到手机桌面"}</button>
+          {installGuide && <div className="mobile-install-guide" role="status"><Smartphone size={18} /><p>{installGuide}</p><button aria-label="关闭添加说明" onClick={() => setInstallGuide("")} type="button"><X size={15} /></button></div>}
           <button onClick={() => void signOut()} type="button"><LogOut size={16} />退出账号</button>
         </aside>
       )}
