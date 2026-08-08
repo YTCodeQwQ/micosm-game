@@ -22,11 +22,11 @@ calls the KataGo and Rapfi nodes through configurable HTTP origins.
 | `KATAGO_MODEL` | Neural-network model path | `.tools/katago/kata1-b28c512.bin.gz` |
 | `KATAGO_CONFIG` | GTP config path | `.tools/katago/engine/default_gtp.cfg` |
 | `KATAGO_MODEL_LABEL` | Model name returned by health checks | `b28c512` |
-| `KATAGO_SERVICE_HOST` | Bind address | `0.0.0.0` |
+| `KATAGO_SERVICE_HOST` | Bind address | `127.0.0.1` |
 | `KATAGO_SERVICE_PORT` | HTTP port | `3210` |
 | `KATAGO_SERVICE_TOKEN` | Optional bearer token | empty for local development |
 | `RAPFI_EXE` | Rapfi Piskvork binary path on Windows or Linux | platform AVX2 build under `.tools/rapfi/engine` |
-| `RAPFI_SERVICE_HOST` | Bind address | `0.0.0.0` |
+| `RAPFI_SERVICE_HOST` | Bind address | `127.0.0.1` |
 | `RAPFI_SERVICE_PORT` | HTTP port | `3211` |
 | `RAPFI_SERVICE_TOKEN` | Optional bearer token | falls back to `AI_SERVICE_TOKEN` |
 

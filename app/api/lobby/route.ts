@@ -1,6 +1,6 @@
 import { getD1 } from "../../../db";
-import { avatarUrlForKey, ensureAuthSchema, getSessionUser } from "../../../lib/auth";
-import { ensureFriendSchema } from "../../../lib/friends";
+import { avatarUrlForKey, getSessionUser } from "../../../lib/auth";
+import { ensureAppSchema } from "../../../lib/database-migrations";
 import type { MatchGame, MatchState, SpectatorPolicy } from "../../../lib/match-engine";
 
 type LobbyRoomRow = {
@@ -31,8 +31,7 @@ function relatedUserIds(row: LobbyRoomRow, viewerId: string) {
 export async function GET(request: Request) {
   try {
     const d1 = getD1();
-    await ensureAuthSchema(d1);
-    await ensureFriendSchema(d1);
+    await ensureAppSchema(d1);
     const user = await getSessionUser(request, d1);
     if (!user) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
 

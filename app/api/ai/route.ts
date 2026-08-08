@@ -1,4 +1,8 @@
 import { env } from "cloudflare:workers";
+import { getD1 } from "../../../db";
+import { getSessionUser } from "../../../lib/auth";
+import { ensureAppSchema } from "../../../lib/database-migrations";
+import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 function serviceConfig(engine: "katago" | "rapfi") {
   const values = env as unknown as {
@@ -22,6 +26,12 @@ function aiServiceHeaders(token?: string) {
 }
 
 export async function GET(request: Request) {
+  const d1 = getD1();
+  await ensureAppSchema(d1);
+  const user = await getSessionUser(request, d1);
+  if (!user) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
+  const rate = await consumeRateLimit(d1, { scope: "ai_health", actor: user.id, limit: 20, windowMs: 60_000 });
+  if (!rate.allowed) return rateLimitResponse(rate, "AI 状态检查太频繁，请稍后再试");
   const engine = new URL(request.url).searchParams.get("engine") === "rapfi" ? "rapfi" : "katago";
   const service = serviceConfig(engine);
   const fallbackName = engine === "rapfi" ? "Rapfi" : "KataGo";

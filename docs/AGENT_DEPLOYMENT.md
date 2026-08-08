@@ -1,6 +1,6 @@
 # Micosm Game deployment handoff for agents
 
-Last verified: 2026-08-02
+Last verified: 2026-08-09
 
 This document is the deployment source of truth for another coding or operations
 agent. Read the entire document before changing runtime configuration. The
@@ -10,10 +10,11 @@ services; it is not a static React site.
 ## 1. Non-negotiable facts
 
 1. Use Node.js `>=22.13.0`.
-2. The web runtime requires three Cloudflare bindings:
+2. The web runtime requires four Cloudflare bindings:
    - D1 database: `DB`
    - R2 bucket: `AVATARS`
    - Durable Object namespace: `ROOM_HUB`, class `GameRoomHub`
+   - Durable Object namespace: `PLATFORM_HUB`, class `PlatformHub`
 3. The local `.wrangler/` directory contains development state only. Never
    commit it or treat it as a production backup.
 4. KataGo and Rapfi binaries/models live under ignored `.tools/`. Git checkout
@@ -33,8 +34,9 @@ Browser / WeChat
        | HTTPS + WebSocket
        v
 vinext Cloudflare Worker
-  |        |          |
-  |        |          +--> ROOM_HUB Durable Object (room events)
+  |        |          |        |
+  |        |          |        +--> PLATFORM_HUB Durable Object (friends/chat/lobby)
+  |        |          +-----------> ROOM_HUB Durable Object (room events)
   |        +-------------> AVATARS R2 (uploaded avatars)
   +----------------------> DB D1 (users, rooms, chat, friends, ranks)
        |
@@ -57,6 +59,7 @@ tiers need native services.
 | `lib/match-history.ts` | idempotent terminal-state archival in `match_records` |
 | `worker/index.ts` | Worker entry point and WebSocket routing |
 | `worker/game-room-hub.ts` | Durable Object WebSocket hub |
+| `worker/platform-hub.ts` | Platform Durable Object for friends, chat and lobby events |
 | `db/index.ts` | D1, R2 and Durable Object binding access |
 | `.openai/hosting.json` | Sites project plus D1/R2 binding names |
 | `vite.config.ts` | vinext, local Miniflare bindings and Durable Object migration |
@@ -74,8 +77,7 @@ npm.cmd test
 npm.cmd run lint
 ```
 
-The lint command currently reports one pre-existing warning in
-`lib/vendor/renjukit-board.js`; it should have zero errors.
+The lint command should complete with zero errors and zero warnings.
 
 ### Start the three processes
 
@@ -170,6 +172,8 @@ platform's encrypted secret/variable system.
 | `RAPFI_SERVICE_ORIGIN` | for Gomoku master | Reachable Rapfi HTTPS origin | `http://127.0.0.1:3211` |
 | `RAPFI_SERVICE_TOKEN` | production | Rapfi bearer token | falls back to `AI_SERVICE_TOKEN` |
 | `AI_RAPFI_SECONDS` | optional | Maximum seconds per Gomoku move, 1-30 | `5` |
+| `MICO_ADMIN_PUBLIC_IDS` | production | Comma-separated moderator `MG-...` IDs | empty |
+| `HEALTH_CHECK_AI` | optional | Include both native engines in every health probe | `false` |
 | `VITE_LAN_ORIGIN` | local/LAN only | Build-time room QR origin override | current page origin |
 
 ### KataGo service
@@ -180,18 +184,20 @@ platform's encrypted secret/variable system.
 | `KATAGO_MODEL` | neural model path | `.tools/katago/kata1-b28c512.bin.gz` |
 | `KATAGO_CONFIG` | GTP config path | `.tools/katago/engine/default_gtp.cfg` |
 | `KATAGO_MODEL_LABEL` | health-check label | `b28c512` |
-| `KATAGO_SERVICE_HOST` | bind address | `0.0.0.0` |
+| `KATAGO_SERVICE_HOST` | bind address | `127.0.0.1` |
 | `KATAGO_SERVICE_PORT` | bind port | `3210` |
 | `KATAGO_SERVICE_TOKEN` | accepted bearer token | empty |
+| `KATAGO_MAX_QUEUE` | maximum waiting move requests | `6` |
 
 ### Rapfi service
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `RAPFI_EXE` | native executable path | platform AVX2 path under `.tools/rapfi` |
-| `RAPFI_SERVICE_HOST` | bind address | `0.0.0.0` |
+| `RAPFI_SERVICE_HOST` | bind address | `127.0.0.1` |
 | `RAPFI_SERVICE_PORT` | bind port | `3211` |
 | `RAPFI_SERVICE_TOKEN` | accepted bearer token | falls back to `AI_SERVICE_TOKEN` |
+| `RAPFI_MAX_QUEUE` | maximum waiting move requests | `8` |
 
 Use the same token on each service and its matching Worker variable. Prefer
 different tokens for KataGo and Rapfi in production.
@@ -201,7 +207,7 @@ different tokens for KataGo and Rapfi in production.
 The safest supported topology is:
 
 1. Deploy the web build to the configured OpenAI Sites/Cloudflare Worker target.
-2. Provision the `DB`, `AVATARS` and `ROOM_HUB` bindings there.
+2. Provision the `DB`, `AVATARS`, `ROOM_HUB` and `PLATFORM_HUB` bindings there.
 3. Run KataGo and Rapfi on one or more dedicated compute servers.
 4. Bind native services to loopback on the compute server.
 5. Publish each service through HTTPS reverse proxy endpoints protected by
@@ -230,17 +236,17 @@ The binding names must remain exact:
 DB        -> D1 database
 AVATARS   -> R2 bucket
 ROOM_HUB  -> Durable Object namespace using class GameRoomHub
+PLATFORM_HUB -> Durable Object namespace using class PlatformHub
 ```
 
-`worker/index.ts` exports `GameRoomHub`, and `vite.config.ts` declares migration
-tag `v1` with `new_sqlite_classes: ["GameRoomHub"]`. Preserve that migration
-history when adding future Durable Object classes.
+`worker/index.ts` exports both classes. `vite.config.ts` preserves `v1` for
+`GameRoomHub` and adds `v2` for `PlatformHub`; do not rewrite this history.
 
-Most application tables are currently created lazily by `ensure*Schema`
-functions on the first relevant API request. `db/schema.ts` is not the complete
-production schema, so `npm run db:generate` alone does not provision the whole
-application. After creating a fresh D1 database, perform the smoke tests below
-to initialize and verify every feature area.
+`lib/database-migrations.ts` is the idempotent, versioned runtime migration
+entry point. It provisions the complete application schema and records applied
+versions in `app_schema_migrations`. `db/schema.ts` mirrors the complete schema.
+After binding a fresh or existing D1 database, call `/api/health` and verify
+versions `1` and `2` before opening traffic.
 
 Authentication schema initialization also backfills a stable `MG-XXXXXXXXXX`
 public ID for existing users and creates a unique index on `users.public_id`.
@@ -258,7 +264,7 @@ a production migration strategy.
 2. Install the lockfile exactly with `npm ci` on CI/server.
 3. Run `npm test` and `npm run lint`.
 4. Run `npm run build`; the output is under `dist/`.
-5. Provision or select the three Cloudflare bindings.
+5. Provision or select the four Cloudflare bindings.
 6. Configure Worker variables and secrets.
 7. Start both AI services and verify their private health endpoints.
 8. Deploy the web build through Sites.
@@ -282,6 +288,9 @@ Both responses must contain `ready: true`.
 Invoke-RestMethod http://127.0.0.1:3000/api/ai
 Invoke-RestMethod 'http://127.0.0.1:3000/api/ai?engine=rapfi'
 ```
+
+These AI endpoints require an authenticated session. For an operator probe use
+`/api/health` or the protected deep probe `/api/health?deep=1`.
 
 Production health requests should use the final HTTPS site origin. Do not expose
 service tokens in browser-side code or query strings.
@@ -362,9 +371,9 @@ Node static server is insufficient.
 
 ### WebSocket does not update
 
-Verify the proxy supports `Upgrade: websocket`, the `ROOM_HUB` binding exists,
-and `/api/realtime?roomId=<CODE>` reaches `worker/index.ts`. Authentication
-cookies must be forwarded during the upgrade.
+Verify the proxy supports `Upgrade: websocket`, both Durable Object bindings
+exist, and `/api/realtime?roomId=<CODE>` plus `/api/platform-realtime` reach
+`worker/index.ts`. Authentication cookies must be forwarded during the upgrade.
 
 ### Camera scan is unavailable or spins forever
 
@@ -380,9 +389,8 @@ Before calling a deployment public production:
    secure server-side invitation system.
 2. Set bearer tokens for both native AI services.
 3. Require HTTPS and keep secure session cookies enabled.
-4. Add rate limiting for authentication, world chat, matchmaking and AI moves.
-5. Add operational moderation tools for world chat reports.
-6. Define D1/R2 backup retention and restore drills.
+4. Configure `MICO_ADMIN_PUBLIC_IDS` with the production moderator player IDs.
+5. Store D1 exports and R2 backups outside the application server and perform a restore drill.
 7. Add service supervision, structured logs and uptime alerts.
 8. Review Rapfi GPLv3 distribution compliance.
 

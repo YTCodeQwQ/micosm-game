@@ -54,8 +54,9 @@ test("applies the comfortable readability sizing pass", async () => {
 });
 
 test("offers mobile fullscreen and installable home-screen support", async () => {
-  const [page, layout, manifest, worker, styles] = await Promise.all([
+  const [page, mobileApp, layout, manifest, worker, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../hooks/useMobileApp.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/manifest.ts", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
@@ -69,13 +70,35 @@ test("offers mobile fullscreen and installable home-screen support", async () =>
   assert.match(manifest, /display: "standalone"/);
   assert.match(manifest, /micosm-app-icon-192\.png/);
   assert.match(manifest, /micosm-app-icon-512\.png/);
-  assert.match(page, /beforeinstallprompt/);
-  assert.match(page, /navigator\.serviceWorker\.register\("\/sw\.js"\)/);
-  assert.match(page, /requestFullscreen/);
+  assert.match(mobileApp, /beforeinstallprompt/);
+  assert.match(mobileApp, /navigator\.serviceWorker\.register\("\/sw\.js"\)/);
+  assert.match(mobileApp, /requestFullscreen/);
   assert.match(page, /添加到手机桌面/);
   assert.match(page, /mobile-display-trigger/);
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(styles, /\.mobile-install-guide/);
+});
+
+test("keeps security, moderation, realtime, and operations hardening wired", async () => {
+  const [migration, rateLimit, moderationRoute, worker, platformHub, health, operations] = await Promise.all([
+    readFile(new URL("../lib/database-migrations.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/rate-limit.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/moderation/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/platform-hub.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/health/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../docs/OPERATIONS.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(migration, /app_schema_migrations/);
+  assert.match(migration, /security_and_moderation/);
+  assert.match(rateLimit, /ON CONFLICT\(bucket_key\)/);
+  assert.match(rateLimit, /retry-after/);
+  assert.match(moderationRoute, /delete_message.*mute.*ban.*unmute.*unban/s);
+  assert.match(worker, /\/api\/platform-realtime/);
+  assert.match(platformHub, /presence_updated/);
+  assert.match(health, /app_schema_migrations/);
+  assert.match(operations, /backup-r2\.ps1/);
 });
 
 test("keeps standard boards, profiles, friends, and room multiplayer behavior in source", async () => {

@@ -15,9 +15,21 @@ const executable = configuredPath(process.env.KATAGO_EXE, defaultExecutable);
 const model = configuredPath(process.env.KATAGO_MODEL, ".tools/katago/kata1-b28c512.bin.gz");
 const config = configuredPath(process.env.KATAGO_CONFIG, ".tools/katago/engine/default_gtp.cfg");
 const port = Math.max(1, Math.min(65535, Number(process.env.KATAGO_SERVICE_PORT) || 3210));
-const host = process.env.KATAGO_SERVICE_HOST?.trim() || "0.0.0.0";
+const host = process.env.KATAGO_SERVICE_HOST?.trim() || "127.0.0.1";
 const serviceToken = process.env.KATAGO_SERVICE_TOKEN?.trim() || "";
 const modelLabel = process.env.KATAGO_MODEL_LABEL?.trim() || "b28c512";
+const maxQueue = Math.max(1, Math.min(32, Number(process.env.KATAGO_MAX_QUEUE) || 6));
+
+const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+if (!loopbackHosts.has(host.toLowerCase()) && !serviceToken) {
+  throw new Error("KATAGO_SERVICE_TOKEN is required when KataGo listens outside localhost");
+}
+
+const startedAt = Date.now();
+const metrics = { requests: 0, successes: 0, failures: 0, totalDurationMs: 0, queued: 0, active: 0 };
+function log(level, event, detail = {}) {
+  console.log(JSON.stringify({ time: new Date().toISOString(), level, service: "katago", event, ...detail }));
+}
 
 for (const [label, path] of [["KataGo", executable], ["模型", model], ["配置", config]]) {
   if (!existsSync(path)) throw new Error(`${label}文件不存在：${path}`);
@@ -43,7 +55,7 @@ engine.stderr.on("data", (chunk) => {
   const lines = String(chunk).trim().split(/\r?\n/).filter(Boolean);
   if (lines.length) {
     lastEngineLog = lines.at(-1);
-    process.stdout.write(`[KataGo] ${lines.at(-1)}\n`);
+    log("info", "engine_log", { detail: lines.at(-1) });
   }
 });
 
@@ -144,7 +156,7 @@ async function generateMove(state, visits, maxSeconds) {
 }
 
 function json(response, status = 200) {
-  return new Response(JSON.stringify(response), { status, headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" } });
+  return new Response(JSON.stringify(response), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
 
 const server = createServer(async (request, response) => {
@@ -155,8 +167,8 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "GET" && url.pathname === "/health") {
-    const payload = JSON.stringify({ ready, engine: "KataGo", model: modelLabel, detail: lastEngineLog });
-    response.writeHead(ready ? 200 : 503, { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" });
+    const payload = JSON.stringify({ ready, engine: "KataGo", model: modelLabel, detail: lastEngineLog, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), metrics });
+    response.writeHead(ready ? 200 : 503, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     response.end(payload);
     return;
   }
@@ -166,19 +178,43 @@ const server = createServer(async (request, response) => {
     return;
   }
   try {
+    if (metrics.queued >= maxQueue) {
+      const result = json({ error: "KataGo 请求队列已满", retryAfter: 3 }, 429);
+      response.writeHead(result.status, { ...Object.fromEntries(result.headers.entries()), "retry-after": "3" });
+      response.end(await result.text());
+      return;
+    }
     let raw = "";
     for await (const chunk of request) {
       raw += chunk;
       if (raw.length > 2_000_000) throw new Error("请求内容过大");
     }
     const payload = JSON.parse(raw);
-    const task = queue.then(() => generateMove(payload.state, Number(payload.visits) || 1600, Number(payload.maxSeconds) || 12));
+    metrics.requests += 1;
+    metrics.queued += 1;
+    const task = queue.then(async () => {
+      metrics.queued -= 1;
+      metrics.active = 1;
+      const started = Date.now();
+      try {
+        const action = await generateMove(payload.state, Number(payload.visits) || 1600, Number(payload.maxSeconds) || 12);
+        metrics.successes += 1;
+        return action;
+      } catch (error) {
+        metrics.failures += 1;
+        throw error;
+      } finally {
+        metrics.active = 0;
+        metrics.totalDurationMs += Date.now() - started;
+      }
+    });
     queue = task.catch(() => undefined);
     const action = await task;
     const result = json({ action, engine: "KataGo", model: modelLabel });
     response.writeHead(result.status, Object.fromEntries(result.headers.entries()));
     response.end(await result.text());
   } catch (error) {
+    log("error", "move_failed", { detail: error instanceof Error ? error.message : String(error) });
     const result = json({ error: error instanceof Error ? error.message : "KataGo 暂时不可用" }, 503);
     response.writeHead(result.status, Object.fromEntries(result.headers.entries()));
     response.end(await result.text());
@@ -186,17 +222,17 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Micosm KataGo service: http://${host}:${port}`);
-  console.log("正在加载 KataGo，首次落子会进行显卡调优，请保持窗口开启。");
+  log("info", "service_started", { host, port, maxQueue, protected: Boolean(serviceToken) });
+  log("info", "engine_loading", { detail: "首次落子会进行显卡调优" });
 });
 
 sendCommand("version", 15 * 60_000).then((version) => {
   ready = true;
   lastEngineLog = `KataGo ${version} · ${modelLabel} 已就绪`;
-  console.log(lastEngineLog);
+  log("info", "engine_ready", { detail: lastEngineLog });
 }).catch((error) => {
   lastEngineLog = error instanceof Error ? error.message : String(error);
-  console.error(lastEngineLog);
+  log("error", "engine_start_failed", { detail: lastEngineLog });
 });
 
 function shutdown() {

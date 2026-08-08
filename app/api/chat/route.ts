@@ -1,7 +1,11 @@
 import { getD1 } from "../../../db";
-import { avatarUrlForKey, ensureAuthSchema, getSessionUser } from "../../../lib/auth";
-import { cleanChatMessage, ensureChatSchema, WORLD_RETENTION_MS } from "../../../lib/chat";
-import { ensureFriendSchema, friendPair } from "../../../lib/friends";
+import { avatarUrlForKey, getSessionUser } from "../../../lib/auth";
+import { cleanChatMessage, WORLD_RETENTION_MS } from "../../../lib/chat";
+import { ensureAppSchema } from "../../../lib/database-migrations";
+import { friendPair } from "../../../lib/friends";
+import { activeSanction } from "../../../lib/moderation";
+import { notifyPlatform } from "../../../lib/platform-realtime";
+import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 type MessageRow = {
   id: string;
@@ -21,9 +25,7 @@ type RoomState = { game: string; open: boolean };
 
 async function prepare(request: Request) {
   const d1 = getD1();
-  await ensureAuthSchema(d1);
-  await ensureFriendSchema(d1);
-  await ensureChatSchema(d1);
+  await ensureAppSchema(d1);
   const user = await getSessionUser(request, d1);
   return { d1, user };
 }
@@ -117,6 +119,8 @@ export async function POST(request: Request) {
     const { d1, user } = await prepare(request);
     if (!user) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
     const now = Date.now();
+    const sanction = await activeSanction(d1, user.id);
+    if (sanction.banned) return Response.json({ error: { code: "account_banned", message: "账号已被暂停使用" } }, { status: 403 });
 
     if (payload.type === "markRead") {
       const peerId = payload.channel === "direct" ? payload.targetUserId ?? "" : ["main", "go", "gomoku", "reversi"].includes(payload.hall ?? "main") ? payload.hall ?? "main" : "main";
@@ -129,17 +133,29 @@ export async function POST(request: Request) {
     if (payload.type === "delete") {
       const result = await d1.prepare("UPDATE chat_messages SET deleted_at = ? WHERE id = ? AND sender_id = ? AND deleted_at IS NULL").bind(now, payload.messageId ?? "", user.id).run();
       if (!result.meta.changes) return Response.json({ error: { code: "message_unavailable", message: "消息已经不存在" } }, { status: 404 });
+      await notifyPlatform({ type: "chat_updated" });
       return Response.json({ deleted: true });
     }
 
     if (payload.type === "report") {
+      const reportLimit = await consumeRateLimit(d1, { scope: "chat_report", actor: user.id, limit: 10, windowMs: 60 * 60_000 });
+      if (!reportLimit.allowed) return rateLimitResponse(reportLimit, "举报次数过多，请稍后再试");
       const message = await d1.prepare("SELECT id, sender_id, channel FROM chat_messages WHERE id = ? AND deleted_at IS NULL").bind(payload.messageId ?? "").first<{ id: string; sender_id: string; channel: string }>();
       if (!message || message.channel !== "world" || message.sender_id === user.id) return Response.json({ error: { code: "cannot_report", message: "无法举报这条消息" } }, { status: 400 });
-      await d1.prepare("INSERT OR IGNORE INTO chat_reports (id, message_id, reporter_id, reason, created_at) VALUES (?, ?, ?, 'inappropriate', ?)").bind(crypto.randomUUID(), message.id, user.id, now).run();
+      await d1.prepare("INSERT OR IGNORE INTO chat_reports (id, message_id, reporter_id, reason, created_at, status) VALUES (?, ?, ?, 'inappropriate', ?, 'open')").bind(crypto.randomUUID(), message.id, user.id, now).run();
+      await notifyPlatform({ type: "moderation_updated" });
       return Response.json({ reported: true });
     }
 
     if (payload.type !== "send" || !payload.channel) return Response.json({ error: { code: "invalid_request", message: "无法识别这个聊天操作" } }, { status: 400 });
+    if (sanction.muted) return Response.json({ error: { code: "chat_muted", message: "你暂时无法发送消息" }, mutedUntil: sanction.mutedUntil }, { status: 403 });
+    const sendLimit = await consumeRateLimit(d1, {
+      scope: payload.channel === "world" ? "chat_world" : "chat_direct",
+      actor: user.id,
+      limit: payload.channel === "world" ? 12 : 45,
+      windowMs: 60_000,
+    });
+    if (!sendLimit.allowed) return rateLimitResponse(sendLimit, "消息发送太频繁，请稍后再试");
     const body = cleanChatMessage(payload.body);
     const hall = payload.channel === "world" && ["main", "go", "gomoku", "reversi"].includes(payload.hall ?? "main") ? payload.hall ?? "main" : "main";
     const targetId = payload.channel === "direct" ? payload.targetUserId ?? "" : "";
@@ -168,6 +184,7 @@ export async function POST(request: Request) {
     await d1.prepare("INSERT INTO chat_messages (id, channel, hall, sender_id, recipient_id, body, room_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(id, payload.channel, hall, user.id, targetId || null, body, roomId, now).run();
     await d1.prepare("DELETE FROM chat_messages WHERE channel = 'world' AND created_at < ?").bind(now - WORLD_RETENTION_MS).run();
+    await notifyPlatform({ type: "chat_updated", channel: payload.channel, hall, userIds: payload.channel === "direct" ? [user.id, targetId] : undefined });
     return Response.json({ sent: true, id });
   } catch (error) {
     return Response.json({ error: { code: "server_error", message: error instanceof Error ? error.message : "聊天操作失败" } }, { status: 500 });

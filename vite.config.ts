@@ -32,9 +32,15 @@ const localBindingConfig = {
       ]
     : [],
   durable_objects: {
-    bindings: [{ name: "ROOM_HUB", class_name: "GameRoomHub" }],
+    bindings: [
+      { name: "ROOM_HUB", class_name: "GameRoomHub" },
+      { name: "PLATFORM_HUB", class_name: "PlatformHub" },
+    ],
   },
-  migrations: [{ tag: "v1", new_sqlite_classes: ["GameRoomHub"] }],
+  migrations: [
+    { tag: "v1", new_sqlite_classes: ["GameRoomHub"] },
+    { tag: "v2", new_sqlite_classes: ["PlatformHub"] },
+  ],
 };
 
 export default defineConfig(async () => {

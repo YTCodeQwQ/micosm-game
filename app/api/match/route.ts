@@ -2,10 +2,15 @@ import { env } from "cloudflare:workers";
 import { getD1, getRoomHub } from "../../../db";
 import { avatarUrlForKey, ensureAuthSchema, getSessionUser, type AuthUser } from "../../../lib/auth";
 import { chooseBuiltInAiAction } from "../../../lib/ai-engine";
+import { ensureAppSchema } from "../../../lib/database-migrations";
 import { ensureFriendSchema } from "../../../lib/friends";
 import { ensureMatchDiagnosticsSchema, findActionReceipt, normalizeActionId, recordMatchEvent, requestIdFor, saveActionReceipt } from "../../../lib/match-diagnostics";
 import { archiveFinishedMatch, ensureMatchHistorySchema } from "../../../lib/match-history";
+import { activeSanction } from "../../../lib/moderation";
+import { notifyPlatform } from "../../../lib/platform-realtime";
 import { ensureRankSchema, rankChange } from "../../../lib/rank";
+import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
+import { logEvent } from "../../../lib/observability";
 import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchPlayer, type MatchState, type SpectatorPolicy } from "../../../lib/match-engine";
 
 type RoomMode = "private" | "matchmaking" | "ranked" | "ai";
@@ -133,10 +138,12 @@ async function notifyRoom(roomId: string, version?: number, type = "room_updated
   } catch {
     // D1 remains authoritative; clients retain a low-frequency recovery fetch.
   }
+  await notifyPlatform({ type: "lobby_updated" });
 }
 
 async function ensureSchema() {
   const d1 = getD1();
+  await ensureAppSchema(d1);
   await d1.prepare(`CREATE TABLE IF NOT EXISTS game_rooms (
     id TEXT PRIMARY KEY,
     game TEXT NOT NULL,
@@ -326,6 +333,7 @@ function jsonError(code: string, message: string, status: number, requestId: str
 }
 
 async function recordRequestError(requestId: string, method: "GET" | "POST", error: unknown) {
+  logEvent("error", "match_request_failed", { requestId, method, error: error instanceof Error ? error.message : String(error) });
   try {
     await recordMatchEvent(getD1(), { requestId, type: "request_error", details: { method, message: error instanceof Error ? error.message : String(error) } });
   } catch {
@@ -638,6 +646,8 @@ export async function GET(request: Request) {
     const d1 = await ensureSchema();
     const sessionUser = await getSessionUser(request, d1);
     if (!sessionUser) return jsonError("auth_required", "请先登录", 401, requestId);
+    const sanction = await activeSanction(d1, sessionUser.id);
+    if (sanction.banned) return jsonError("account_banned", "账号已被暂停使用", 403, requestId);
     let row = await d1.prepare("SELECT * FROM game_rooms WHERE id = ?").bind(id).first<RoomRow>();
     if (!row) return jsonError("room_not_found", "没有找到这个对局", 404, requestId);
     const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
@@ -666,6 +676,16 @@ export async function POST(request: Request) {
     const d1 = await ensureSchema();
     const sessionUser = await getSessionUser(request, d1);
     if (!sessionUser) return jsonError("auth_required", "请先登录", 401, requestId);
+    const sanction = await activeSanction(d1, sessionUser.id);
+    if (sanction.banned) return jsonError("account_banned", "账号已被暂停使用", 403, requestId);
+    const expensiveTypes = new Set(["createAI", "rankmake", "create", "matchmake", "join"]);
+    const rate = await consumeRateLimit(d1, {
+      scope: payload.type === "aiMove" ? "match_ai" : expensiveTypes.has(payload.type ?? "") ? "match_create" : "match_action",
+      actor: sessionUser.id,
+      limit: payload.type === "aiMove" ? 30 : expensiveTypes.has(payload.type ?? "") ? 15 : 180,
+      windowMs: 60_000,
+    });
+    if (!rate.allowed) return rateLimitResponse(rate, payload.type === "aiMove" ? "AI 请求太频繁，请稍后再试" : "对局操作太频繁，请稍后再试");
 
     if (payload.type === "createAI") {
       if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return jsonError("invalid_game", "当前游戏暂不支持人机对战", 400, requestId);

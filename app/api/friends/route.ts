@@ -1,6 +1,9 @@
 import { getD1 } from "../../../db";
-import { avatarUrlForKey, ensureAuthSchema, getSessionUser, normalizeUsernameKey } from "../../../lib/auth";
-import { ensureFriendSchema, friendPair, GAME_INVITE_TTL_MS, ONLINE_WINDOW_MS } from "../../../lib/friends";
+import { avatarUrlForKey, getSessionUser, normalizeUsernameKey } from "../../../lib/auth";
+import { ensureAppSchema } from "../../../lib/database-migrations";
+import { friendPair, GAME_INVITE_TTL_MS, ONLINE_WINDOW_MS } from "../../../lib/friends";
+import { notifyPlatform } from "../../../lib/platform-realtime";
+import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 type PersonRow = {
   id: string;
@@ -40,8 +43,7 @@ function publicPerson(row: PersonRow, now: number) {
 
 async function prepare(request: Request) {
   const d1 = getD1();
-  await ensureAuthSchema(d1);
-  await ensureFriendSchema(d1);
+  await ensureAppSchema(d1);
   const user = await getSessionUser(request, d1);
   if (!user) return { d1, user: null };
   const now = Date.now();
@@ -56,6 +58,10 @@ export async function GET(request: Request) {
     const { d1, user } = await prepare(request);
     if (!user) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
     const now = Date.now();
+    if (payload.type !== "offline") {
+      const rate = await consumeRateLimit(d1, { scope: "friends_action", actor: user.id, limit: 30, windowMs: 60_000 });
+      if (!rate.allowed) return rateLimitResponse(rate, "好友操作太频繁，请稍后再试");
+    }
     const rawQuery = new URL(request.url).searchParams.get("q")?.trim() ?? "";
     const query = normalizeUsernameKey(rawQuery);
 
@@ -135,19 +141,22 @@ export async function POST(request: Request) {
 
     if (payload.type === "offline") {
       await d1.prepare("DELETE FROM user_presence WHERE user_id = ?").bind(user.id).run();
+      await notifyPlatform({ type: "presence_updated" });
       return Response.json({ ok: true });
     }
 
     if (payload.type === "respondGameInvite") {
-      const invite = await d1.prepare("SELECT id, room_id, invitee_id, status, expires_at FROM game_invites WHERE id = ?")
-        .bind(payload.inviteId ?? "").first<{ id: string; room_id: string; invitee_id: string; status: string; expires_at: number }>();
+      const invite = await d1.prepare("SELECT id, room_id, inviter_id, invitee_id, status, expires_at FROM game_invites WHERE id = ?")
+        .bind(payload.inviteId ?? "").first<{ id: string; room_id: string; inviter_id: string; invitee_id: string; status: string; expires_at: number }>();
       if (!invite || invite.invitee_id !== user.id || invite.status !== "pending" || invite.expires_at <= now) return Response.json({ error: { code: "invite_expired", message: "这个对局邀请已经失效" } }, { status: 409 });
       if (!payload.accept) {
         await d1.prepare("UPDATE game_invites SET status = 'declined', updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, invite.id).run();
+        await notifyPlatform({ type: "friends_updated", userIds: [user.id, invite.inviter_id] });
         return Response.json({ declined: true });
       }
       const room = await d1.prepare("SELECT id FROM game_rooms WHERE id = ? AND mode = 'private' AND white_player IS NULL").bind(invite.room_id).first<{ id: string }>();
       if (!room) return Response.json({ error: { code: "room_unavailable", message: "邀请的房间已经不可加入" } }, { status: 409 });
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, invite.inviter_id] });
       return Response.json({ roomId: invite.room_id });
     }
 
@@ -164,10 +173,12 @@ export async function POST(request: Request) {
       if (relation?.status === "accepted") return Response.json({ accepted: true });
       if (relation?.status === "pending" && relation.requested_by !== user.id) {
         await d1.prepare("UPDATE friendships SET status = 'accepted', updated_at = ? WHERE user_low = ? AND user_high = ?").bind(now, low, high).run();
+        await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
         return Response.json({ accepted: true });
       }
       await d1.prepare("INSERT INTO friendships (user_low, user_high, requested_by, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?) ON CONFLICT(user_low, user_high) DO UPDATE SET requested_by = excluded.requested_by, status = 'pending', updated_at = excluded.updated_at")
         .bind(low, high, user.id, now, now).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ requested: true });
     }
 
@@ -175,16 +186,19 @@ export async function POST(request: Request) {
       if (!relation || relation.status !== "pending" || relation.requested_by === user.id) return Response.json({ error: { code: "request_unavailable", message: "好友申请已经失效" } }, { status: 409 });
       if (payload.type === "acceptRequest") await d1.prepare("UPDATE friendships SET status = 'accepted', updated_at = ? WHERE user_low = ? AND user_high = ?").bind(now, low, high).run();
       else await d1.prepare("DELETE FROM friendships WHERE user_low = ? AND user_high = ?").bind(low, high).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ accepted: payload.type === "acceptRequest" });
     }
 
     if (payload.type === "cancelRequest") {
       await d1.prepare("DELETE FROM friendships WHERE user_low = ? AND user_high = ? AND status = 'pending' AND requested_by = ?").bind(low, high, user.id).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ cancelled: true });
     }
 
     if (payload.type === "removeFriend") {
       await d1.prepare("DELETE FROM friendships WHERE user_low = ? AND user_high = ? AND status = 'accepted'").bind(low, high).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ removed: true });
     }
 
@@ -193,11 +207,13 @@ export async function POST(request: Request) {
         .bind(low, high, user.id, now, now).run();
       await d1.prepare("UPDATE game_invites SET status = 'cancelled', updated_at = ? WHERE status = 'pending' AND ((inviter_id = ? AND invitee_id = ?) OR (inviter_id = ? AND invitee_id = ?))")
         .bind(now, user.id, targetId, targetId, user.id).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ blocked: true });
     }
 
     if (payload.type === "unblockUser") {
       await d1.prepare("DELETE FROM friendships WHERE user_low = ? AND user_high = ? AND status = 'blocked' AND requested_by = ?").bind(low, high, user.id).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ unblocked: true });
     }
 
@@ -213,6 +229,7 @@ export async function POST(request: Request) {
       const inviteId = crypto.randomUUID();
       await d1.prepare("INSERT INTO game_invites (id, inviter_id, invitee_id, room_id, game, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
         .bind(inviteId, user.id, targetId, room.id, room.game, now + GAME_INVITE_TTL_MS, now, now).run();
+      await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ invited: true, inviteId });
     }
 

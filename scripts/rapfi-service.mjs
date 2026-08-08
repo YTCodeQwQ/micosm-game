@@ -16,8 +16,9 @@ const defaultExecutable = process.platform === "win32"
   : ".tools/rapfi/engine/pbrain-rapfi-linux-clang-avx2";
 const executable = configuredPath(process.env.RAPFI_EXE, defaultExecutable);
 const port = Math.max(1, Math.min(65535, Number(process.env.RAPFI_SERVICE_PORT) || 3211));
-const host = process.env.RAPFI_SERVICE_HOST?.trim() || "0.0.0.0";
+const host = process.env.RAPFI_SERVICE_HOST?.trim() || "127.0.0.1";
 const serviceToken = process.env.RAPFI_SERVICE_TOKEN?.trim() || process.env.AI_SERVICE_TOKEN?.trim() || "";
+const maxQueue = Math.max(1, Math.min(32, Number(process.env.RAPFI_MAX_QUEUE) || 8));
 const engineDirectory = dirname(executable);
 const requiredAssets = ["config.toml", "mix9svqfreestyle_bsmix.bin.lz4", "mix9svqrenju_bs15_black.bin.lz4", "mix9svqrenju_bs15_white.bin.lz4"];
 
@@ -27,13 +28,24 @@ for (const asset of requiredAssets) {
   if (!existsSync(path)) throw new Error(`Rapfi 权重或配置不存在：${path}`);
 }
 
+const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+if (!loopbackHosts.has(host.toLowerCase()) && !serviceToken) {
+  throw new Error("RAPFI_SERVICE_TOKEN is required when Rapfi listens outside localhost");
+}
+
+const startedAt = Date.now();
+const metrics = { requests: 0, successes: 0, failures: 0, totalDurationMs: 0, queued: 0, active: 0 };
+function log(level, event, detail = {}) {
+  console.log(JSON.stringify({ time: new Date().toISOString(), level, service: "rapfi", event, ...detail }));
+}
+
 let ready = true;
 let busy = false;
 let lastDetail = "Rapfi NNUE 已就绪";
 let queue = Promise.resolve();
 
 function json(response, status = 200) {
-  return new Response(JSON.stringify(response), { status, headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" } });
+  return new Response(JSON.stringify(response), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
 
 function rapfiMove(state, maxSeconds) {
@@ -113,7 +125,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "GET" && url.pathname === "/health") {
-    const result = json({ ready, busy, engine: "Rapfi", model: "mix9svq NNUE", detail: lastDetail }, ready ? 200 : 503);
+    const result = json({ ready, busy, engine: "Rapfi", model: "mix9svq NNUE", detail: lastDetail, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), metrics }, ready ? 200 : 503);
     response.writeHead(result.status, Object.fromEntries(result.headers.entries()));
     response.end(await result.text());
     return;
@@ -124,19 +136,43 @@ const server = createServer(async (request, response) => {
     return;
   }
   try {
+    if (metrics.queued >= maxQueue) {
+      const result = json({ error: "Rapfi 请求队列已满", retryAfter: 2 }, 429);
+      response.writeHead(result.status, { ...Object.fromEntries(result.headers.entries()), "retry-after": "2" });
+      response.end(await result.text());
+      return;
+    }
     let raw = "";
     for await (const chunk of request) {
       raw += chunk;
       if (raw.length > 2_000_000) throw new Error("请求内容过大");
     }
     const payload = JSON.parse(raw);
-    const task = queue.then(() => rapfiMove(payload.state, payload.maxSeconds));
+    metrics.requests += 1;
+    metrics.queued += 1;
+    const task = queue.then(async () => {
+      metrics.queued -= 1;
+      metrics.active = 1;
+      const started = Date.now();
+      try {
+        const action = await rapfiMove(payload.state, payload.maxSeconds);
+        metrics.successes += 1;
+        return action;
+      } catch (error) {
+        metrics.failures += 1;
+        throw error;
+      } finally {
+        metrics.active = 0;
+        metrics.totalDurationMs += Date.now() - started;
+      }
+    });
     queue = task.catch(() => undefined);
     const action = await task;
     const result = json({ action, engine: "Rapfi", model: "mix9svq NNUE" });
     response.writeHead(result.status, Object.fromEntries(result.headers.entries()));
     response.end(await result.text());
   } catch (error) {
+    log("error", "move_failed", { detail: error instanceof Error ? error.message : String(error) });
     const result = json({ error: error instanceof Error ? error.message : "Rapfi 暂时不可用" }, 503);
     response.writeHead(result.status, Object.fromEntries(result.headers.entries()));
     response.end(await result.text());
@@ -144,8 +180,8 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Micosm Rapfi service: http://${host}:${port}`);
-  console.log("Rapfi mix9svq NNUE 已就绪，支持自由五子棋与 Renju 禁手。");
+  log("info", "service_started", { host, port, maxQueue, protected: Boolean(serviceToken) });
+  log("info", "engine_ready", { detail: "mix9svq NNUE · Freestyle/Renju" });
 });
 
 function shutdown() {
@@ -155,4 +191,3 @@ function shutdown() {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-

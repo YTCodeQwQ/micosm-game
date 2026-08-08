@@ -2,6 +2,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
+  publicId: text("public_id"),
   phone: text("phone").notNull(),
   displayName: text("display_name").notNull(),
   usernameKey: text("username_key"),
@@ -9,10 +10,12 @@ export const users = sqliteTable("users", {
   passwordSalt: text("password_salt"),
   signature: text("signature").notNull().default(""),
   avatarKey: text("avatar_key"),
+  role: text("role").notNull().default("player"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [
   uniqueIndex("users_phone_unique").on(table.phone),
+  uniqueIndex("users_public_id_unique").on(table.publicId),
   uniqueIndex("users_username_key_unique").on(table.usernameKey),
 ]);
 
@@ -132,7 +135,92 @@ export const chatReports = sqliteTable("chat_reports", {
   reporterId: text("reporter_id").notNull(),
   reason: text("reason").notNull(),
   createdAt: integer("created_at").notNull(),
+  status: text("status").notNull().default("open"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: integer("reviewed_at"),
+  resolution: text("resolution"),
 }, (table) => [uniqueIndex("chat_reports_unique").on(table.messageId, table.reporterId)]);
+
+export const apiRateLimits = sqliteTable("api_rate_limits", {
+  bucketKey: text("bucket_key").primaryKey(),
+  scope: text("scope").notNull(),
+  hits: integer("hits").notNull(),
+  resetAt: integer("reset_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [index("api_rate_limits_reset_idx").on(table.resetAt)]);
+
+export const userSanctions = sqliteTable("user_sanctions", {
+  userId: text("user_id").primaryKey(),
+  mutedUntil: integer("muted_until"),
+  bannedUntil: integer("banned_until"),
+  reason: text("reason").notNull().default(""),
+  updatedBy: text("updated_by").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [index("user_sanctions_expiry_idx").on(table.mutedUntil, table.bannedUntil)]);
+
+export const moderationActions = sqliteTable("moderation_actions", {
+  id: text("id").primaryKey(),
+  adminUserId: text("admin_user_id").notNull(),
+  targetUserId: text("target_user_id"),
+  messageId: text("message_id"),
+  action: text("action").notNull(),
+  reason: text("reason").notNull().default(""),
+  durationMs: integer("duration_ms"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("moderation_actions_created_idx").on(table.createdAt)]);
+
+export const appSchemaMigrations = sqliteTable("app_schema_migrations", {
+  version: integer("version").primaryKey(),
+  name: text("name").notNull(),
+  appliedAt: integer("applied_at").notNull(),
+});
+
+export const matchEvents = sqliteTable("match_events", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id"),
+  requestId: text("request_id").notNull(),
+  eventType: text("event_type").notNull(),
+  actorUserId: text("actor_user_id"),
+  actorPlayerId: text("actor_player_id"),
+  roomVersion: integer("room_version"),
+  details: text("details").notNull().default("{}"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  index("match_events_room_created_idx").on(table.roomId, table.createdAt),
+  index("match_events_request_idx").on(table.requestId),
+]);
+
+export const matchActionReceipts = sqliteTable("match_action_receipts", {
+  actionId: text("action_id").primaryKey(),
+  roomId: text("room_id").notNull(),
+  actorUserId: text("actor_user_id").notNull(),
+  resultingVersion: integer("resulting_version").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("match_action_receipts_room_idx").on(table.roomId, table.createdAt)]);
+
+export const matchRecords = sqliteTable("match_records", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull(),
+  roomVersion: integer("room_version").notNull(),
+  game: text("game").notNull(),
+  mode: text("mode").notNull(),
+  boardSize: integer("board_size").notNull(),
+  blackUserId: text("black_user_id"),
+  whiteUserId: text("white_user_id"),
+  blackName: text("black_name").notNull(),
+  whiteName: text("white_name").notNull(),
+  blackAvatar: text("black_avatar"),
+  whiteAvatar: text("white_avatar"),
+  winner: text("winner").notNull(),
+  reason: text("reason").notNull(),
+  state: text("state").notNull(),
+  startedAt: integer("started_at").notNull(),
+  endedAt: integer("ended_at").notNull(),
+}, (table) => [
+  uniqueIndex("match_records_room_version_unique").on(table.roomId, table.roomVersion),
+  index("match_records_black_history_idx").on(table.blackUserId, table.endedAt),
+  index("match_records_white_history_idx").on(table.whiteUserId, table.endedAt),
+]);
 
 export const rankProfiles = sqliteTable("rank_profiles", {
   userId: text("user_id").notNull(),

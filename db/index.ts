@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
 
-const bindings = env as unknown as { DB?: D1Database; AVATARS?: R2Bucket; ROOM_HUB?: DurableObjectNamespace };
+const bindings = env as unknown as { DB?: D1Database; AVATARS?: R2Bucket; ROOM_HUB?: DurableObjectNamespace; PLATFORM_HUB?: DurableObjectNamespace };
 
 export function getDb() {
   if (!bindings.DB) {
@@ -30,4 +30,10 @@ export function getRoomHub() {
   const roomHub = bindings.ROOM_HUB;
   if (!roomHub) throw new Error("Cloudflare Durable Object binding `ROOM_HUB` is unavailable.");
   return roomHub;
+}
+
+export function getPlatformHub() {
+  const platformHub = bindings.PLATFORM_HUB;
+  if (!platformHub) throw new Error("Cloudflare Durable Object binding `PLATFORM_HUB` is unavailable.");
+  return platformHub;
 }

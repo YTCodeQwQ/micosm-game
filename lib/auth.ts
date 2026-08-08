@@ -12,6 +12,7 @@ export type AuthUser = {
   avatarKey: string | null;
   avatarUrl: string | null;
   hasPassword: boolean;
+  role: "player" | "admin";
 };
 
 export type AuthUserRow = {
@@ -24,6 +25,7 @@ export type AuthUserRow = {
   password_salt: string | null;
   signature: string | null;
   avatar_key: string | null;
+  role: string | null;
 };
 
 type D1Statement = {
@@ -91,6 +93,7 @@ export function authUserFromRow(row: AuthUserRow): AuthUser {
     avatarKey: row.avatar_key,
     avatarUrl: avatarUrlForKey(row.avatar_key),
     hasPassword: Boolean(row.password_hash && row.password_salt),
+    role: row.role === "admin" ? "admin" : "player",
   };
 }
 
@@ -105,6 +108,7 @@ export async function ensureAuthSchema(d1: D1) {
     password_salt TEXT,
     signature TEXT NOT NULL DEFAULT '',
     avatar_key TEXT,
+    role TEXT NOT NULL DEFAULT 'player',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
@@ -117,6 +121,7 @@ export async function ensureAuthSchema(d1: D1) {
     ["password_salt", "ALTER TABLE users ADD COLUMN password_salt TEXT"],
     ["signature", "ALTER TABLE users ADD COLUMN signature TEXT NOT NULL DEFAULT ''"],
     ["avatar_key", "ALTER TABLE users ADD COLUMN avatar_key TEXT"],
+    ["role", "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'player'"],
   ] as const;
   for (const [name, sql] of additions) if (!names.has(name)) await d1.prepare(sql).run();
 
@@ -201,7 +206,7 @@ export async function getSessionUser(request: Request, d1: D1): Promise<AuthUser
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) return null;
   const tokenHash = await hashToken(token);
-  const row = await d1.prepare(`SELECT u.id, u.public_id, u.phone, u.display_name, u.username_key, u.password_hash, u.password_salt, u.signature, u.avatar_key
+  const row = await d1.prepare(`SELECT u.id, u.public_id, u.phone, u.display_name, u.username_key, u.password_hash, u.password_salt, u.signature, u.avatar_key, u.role
     FROM user_sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > ?`).bind(tokenHash, Date.now()).first<AuthUserRow>();
   return row ? authUserFromRow(row) : null;

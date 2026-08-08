@@ -4,13 +4,15 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { GameRoomHub } from "./game-room-hub";
+import { PlatformHub } from "./platform-hub";
 
-export { GameRoomHub };
+export { GameRoomHub, PlatformHub };
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   ROOM_HUB: DurableObjectNamespace<GameRoomHub>;
+  PLATFORM_HUB: DurableObjectNamespace<PlatformHub>;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -40,6 +42,11 @@ const worker = {
       if (!roomId) return Response.json({ error: "缺少房间号" }, { status: 400 });
       const roomHub = env.ROOM_HUB.get(env.ROOM_HUB.idFromName(roomId));
       return roomHub.fetch(request);
+    }
+
+    if (url.pathname === "/api/platform-realtime") {
+      const platformHub = env.PLATFORM_HUB.get(env.PLATFORM_HUB.idFromName("micosm-platform"));
+      return platformHub.fetch(request);
     }
 
     if (url.pathname === "/_vinext/image") {

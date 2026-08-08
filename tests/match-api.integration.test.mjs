@@ -48,7 +48,7 @@ test("spectating policies keep ranked private and require matchmaking consent", 
   const friend = new TestClient();
   const stranger = new TestClient();
   const hostUser = await register(host, uniqueIdentity("V03H", "133"));
-  const guestUser = await register(guest, uniqueIdentity("V03G", "132"));
+  await register(guest, uniqueIdentity("V03G", "132"));
   const friendUser = await register(friend, uniqueIdentity("V03F", "131"));
   await register(stranger, uniqueIdentity("V03X", "130"));
 
