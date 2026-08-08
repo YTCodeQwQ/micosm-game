@@ -27,6 +27,9 @@ test("includes the complete first story season and responsive dialogue player", 
   ]);
 
   assert.match(page, /mainView.*"story"/);
+  assert.match(page, /const STORY_MODE_ENABLED = false/);
+  assert.match(page, /STORY_MODE_ENABLED && <button className=\{mainView === "story"/);
+  assert.match(page, /STORY_MODE_ENABLED && <button className="mobile-story-banner"/);
   assert.match(page, /<StoryMode user=\{authUser\}/);
   assert.match(page, /micosm-story-season-one/);
   assert.match(page, /fujiwara-mio\.png/);
@@ -39,6 +42,15 @@ test("includes the complete first story season and responsive dialogue player", 
   assert.match(styles, /\.story-player/);
   assert.match(styles, /\.story-dialogue/);
   assert.match(styles, /@media \(max-width: 760px\)/);
+});
+
+test("applies the comfortable readability sizing pass", async () => {
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+
+  assert.match(styles, /Comfortable readability pass/);
+  assert.match(styles, /\.main-nav button, \.main-nav > span \{ min-height: 38px; font-size: 13px; \}/);
+  assert.match(styles, /\.mobile-primary-nav button \{ font-size: 10px; \}/);
+  assert.match(styles, /\.mobile-account-page-open \.account-summary strong \{ font-size: 15px; \}/);
 });
 
 test("keeps standard boards, profiles, friends, and room multiplayer behavior in source", async () => {

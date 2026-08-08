@@ -62,6 +62,8 @@ import { activateMatch, applyMatchAction, createMatchState, type AiDifficulty, t
 import { RANK_NAMES, rankLabel } from "../lib/rank";
 import { STORY_SEASON_ONE, STORY_SEASON_TITLE } from "../lib/story-season-one";
 
+const STORY_MODE_ENABLED = false;
+
 type GameId = "gomoku" | "go" | "reversi";
 type Player = "black" | "white";
 type Stone = Player | null;
@@ -1403,6 +1405,7 @@ export default function HomePage() {
   }
 
   function openStoryMode() {
+    if (!STORY_MODE_ENABLED) return;
     if (room) return showToast("请先结束当前对局再进入剧情");
     setMainView("story");
     setLibraryMenuOpen(false);
@@ -2301,7 +2304,7 @@ export default function HomePage() {
         <nav className="main-nav" aria-label="主导航">
           <button className={mainView === "games" ? "active" : ""} onClick={() => setMainView("games")} type="button"><Play size={17} fill={mainView === "games" ? "currentColor" : "none"} />游戏</button>
           <button className={mainView === "ranked" ? "active" : ""} onClick={openRankedLobby} type="button"><Trophy size={17} />排位</button>
-          <button className={mainView === "story" ? "active" : ""} onClick={openStoryMode} type="button"><BookOpen size={17} />剧情</button>
+          {STORY_MODE_ENABLED && <button className={mainView === "story" ? "active" : ""} onClick={openStoryMode} type="button"><BookOpen size={17} />剧情</button>}
         </nav>
         <div className="header-actions">
           <span className="notification-trigger">
@@ -3132,11 +3135,11 @@ function MobileGameHome({ activeGame, authUser, busy, colorPreference, completed
         </div>
       </section>
 
-      <button className="mobile-story-banner" onClick={onStory} type="button">
+      {STORY_MODE_ENABLED && <button className="mobile-story-banner" onClick={onStory} type="button">
         <span><Image alt="藤原澪与白石铃音" fill sizes="100vw" src="/micosm-match-table-mobile.webp" unoptimized /></span>
         <div><small>STORY MODE</small><strong>棋社日常</strong><p>在棋局与相遇之间，继续星海棋社的故事。</p></div>
         <BookOpen size={20} />
-      </button>
+      </button>}
 
       <details className="mobile-room-studio">
         <summary><span><Users size={19} /></span><div><strong>和好友下一盘</strong><small>创建房间、扫码或输入邀请码</small></div><ChevronDown size={18} /></summary>
