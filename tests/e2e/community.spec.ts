@@ -74,6 +74,43 @@ const post = {
 };
 
 async function mockCommunity(page: Page) {
+  await page.route("**/api/chat**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === "POST") return route.fulfill({ json: { read: true } });
+    if (url.searchParams.get("view") === "overview") return route.fulfill({ json: { worldUnread: 0, directUnreads: {} } });
+    return route.fulfill({ json: { messages: [{
+      id: "live-message-1",
+      channel: "world",
+      hall: "main",
+      body: "晚上好，五子棋大厅有人来一局吗？",
+      createdAt: Date.now(),
+      isMine: false,
+      sender: author,
+      room: null,
+    }] } });
+  });
+  await page.route("**/api/lobby**", async (route) => route.fulfill({ json: {
+    counts: { main: 1, go: 0, gomoku: 1, reversi: 0 },
+    rooms: [{
+      id: "live-room-1",
+      game: "gomoku",
+      mode: "private",
+      spectatorPolicy: "public",
+      status: "waiting",
+      turn: "black",
+      moveCount: 0,
+      boardSize: 15,
+      board: Array.from({ length: 15 }, () => Array.from({ length: 15 }, () => null)),
+      lastMove: null,
+      players: { black: "星野棋手", white: null },
+      profiles: { black: { avatarUrl: null }, white: { avatarUrl: null } },
+      joinable: true,
+      spectatable: true,
+      spectatorCount: 2,
+      updatedAt: Date.now(),
+    }],
+  } }));
   await page.route("**/api/community**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -96,6 +133,21 @@ test("mobile community supports discussion, announcements, and posting without o
   await expect(page.getByRole("heading", { name: post.title })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-main-mobile.png") });
+
+  await page.locator(".community-primary-tabs").getByRole("button", { name: /实时大厅/ }).click();
+  await expect(page.locator(".community-center")).toBeVisible();
+  await expect(page.locator(".community-primary-tabs").getByRole("button", { name: /实时大厅/ })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "世界主大厅" })).toBeVisible();
+  await expect(page.locator(".community-live-lobby")).toBeVisible();
+  await expect(page.locator(".chat-panel")).toHaveCount(0);
+  await expect(page.getByText("晚上好，五子棋大厅有人来一局吗？")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-live-mobile.png") });
+  await page.locator(".community-live-mobile-tabs").getByRole("button", { name: /公开棋局/ }).click();
+  await expect(page.locator(".community-live-rooms")).toBeVisible();
+  await expect(page.locator(".community-live-chat")).toBeHidden();
+  await page.locator(".community-live-mobile-tabs").getByRole("button", { name: /频道聊天/ }).click();
+  await page.locator(".community-primary-tabs").getByRole("button", { name: /讨论区/ }).click();
 
   await page.getByRole("heading", { name: post.title }).click();
   await expect(page.getByText("我会先在右侧做交换。")).toBeVisible();
@@ -131,6 +183,11 @@ test("community stays usable on the narrowest supported screen", async ({ page }
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /大厅/ }).click();
   await expect(page.getByRole("heading", { name: "星海交流站" })).toBeVisible();
   await expectNoHorizontalOverflow(page);
+  await page.locator(".community-primary-tabs").getByRole("button", { name: /实时大厅/ }).click();
+  await expect(page.getByRole("heading", { name: "世界主大厅" })).toBeVisible();
+  await expect(page.locator(".community-live-composer")).toBeInViewport();
+  await expectNoHorizontalOverflow(page);
+  await page.locator(".community-primary-tabs").getByRole("button", { name: /讨论区/ }).click();
   await page.getByRole("button", { name: /发布讨论/ }).first().click();
   await expect(page.getByRole("dialog", { name: "发布讨论" })).toBeVisible();
   await expectNoHorizontalOverflow(page);
@@ -146,7 +203,22 @@ test("desktop community keeps the feed focused and readable", async ({ page }, t
   await expect(page.getByRole("heading", { name: post.title })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-main-desktop.png") });
+  await page.locator(".community-primary-tabs").getByRole("button", { name: /实时大厅/ }).click();
+  await expect(page.getByRole("heading", { name: "星海交流站" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "世界主大厅" })).toBeVisible();
+  await expect(page.locator(".community-live-lobby")).toBeVisible();
+  await expect(page.locator(".chat-panel")).toHaveCount(0);
+  await expect(page.getByText("晚上好，五子棋大厅有人来一局吗？")).toBeVisible();
+  await expect(page.locator(".community-live-room-list").getByText("星野棋手")).toBeVisible();
+  await page.setViewportSize({ width: 2048, height: 1088 });
+  await expectNoHorizontalOverflow(page);
+  const liveLobbyBox = await page.locator(".community-live-lobby").boundingBox();
+  expect(liveLobbyBox).not.toBeNull();
+  expect(liveLobbyBox!.x).toBeLessThanOrEqual(24);
+  expect(2048 - (liveLobbyBox!.x + liveLobbyBox!.width)).toBeLessThanOrEqual(24);
+  await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-live-desktop.png") });
   await page.locator(".community-primary-tabs").getByRole("button", { name: /公告/ }).click();
+  await expect(page.locator(".community-live-lobby")).toHaveCount(0);
   await expect(page.getByText(announcement.body)).toBeVisible();
   await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-announcement-desktop.png") });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Bell, Bookmark, ChevronRight, Clock3, Flag, Flame, Gamepad2, Globe2,
@@ -96,16 +97,18 @@ function GameAttachment({ attachment, onOpen }: { attachment: Attachment; onOpen
   );
 }
 
-export function CommunityCenter({ initialPostId, initialSection, onOpenGame, onOpenLiveLobby, onToast, revision, user }: {
+export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCloseLiveLobby, onOpenGame, onOpenLiveLobby, onToast, revision, user }: {
   initialPostId: string | null;
   initialSection: "discussion" | "announcements";
+  liveLobby: ReactNode;
+  onCloseLiveLobby: () => void;
   onOpenGame: (file: MicosmGameFile, postId: string) => void;
   onOpenLiveLobby: () => void;
   onToast: (message: string, tone?: "info" | "success" | "warning") => void;
   revision: number;
   user: CommunityUser;
 }) {
-  const [section, setSection] = useState<"discussion" | "announcements">(initialSection);
+  const [section, setSection] = useState<"live" | "discussion" | "announcements">(initialSection);
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [announcements, setAnnouncements] = useState<CommunityAnnouncement[]>([]);
   const [category, setCategory] = useState("all");
@@ -269,7 +272,7 @@ export function CommunityCenter({ initialPostId, initialSection, onOpenGame, onO
   const selectedAttachment = useMemo(() => savedGames.find((record) => record.id === savedGameId), [savedGameId, savedGames]);
 
   return (
-    <section className="community-center" aria-label="星海社区">
+    <section className={`community-center ${section === "live" ? "community-live-active" : ""}`} aria-label="星海社区">
       <header className="community-hero">
         <Image alt="星海棋社交流区" fill priority sizes="100vw" src="/micosm-club-lobby-desktop.webp" unoptimized />
         <div className="community-hero-shade" />
@@ -278,14 +281,14 @@ export function CommunityCenter({ initialPostId, initialSection, onOpenGame, onO
       </header>
 
       <nav className="community-primary-tabs" aria-label="社区分区">
-        <button onClick={onOpenLiveLobby} type="button"><Globe2 size={17} /><span>实时大厅</span><small>聊天与观战</small></button>
-        <button aria-current={section === "discussion" ? "page" : undefined} className={section === "discussion" ? "active" : ""} onClick={() => { setSection("discussion"); setSelectedPost(null); }} type="button"><MessageCircle size={17} /><span>讨论区</span><small>交流与复盘</small></button>
-        <button aria-current={section === "announcements" ? "page" : undefined} className={section === "announcements" ? "active" : ""} onClick={() => { setSection("announcements"); setSelectedPost(null); }} type="button"><Bell size={17} /><span>公告</span><small>{announcements.length} 条消息</small></button>
+        <button aria-current={section === "live" ? "page" : undefined} className={section === "live" ? "active" : ""} onClick={() => { setSection("live"); setSelectedPost(null); onOpenLiveLobby(); }} type="button"><Globe2 size={17} /><span>实时大厅</span><small>聊天与观战</small></button>
+        <button aria-current={section === "discussion" ? "page" : undefined} className={section === "discussion" ? "active" : ""} onClick={() => { setSection("discussion"); setSelectedPost(null); onCloseLiveLobby(); }} type="button"><MessageCircle size={17} /><span>讨论区</span><small>交流与复盘</small></button>
+        <button aria-current={section === "announcements" ? "page" : undefined} className={section === "announcements" ? "active" : ""} onClick={() => { setSection("announcements"); setSelectedPost(null); onCloseLiveLobby(); }} type="button"><Bell size={17} /><span>公告</span><small>{announcements.length} 条消息</small></button>
       </nav>
 
       {error && !composerOpen && <div className="community-error"><Bell size={17} /><span>{error}</span><button onClick={() => setError("")} type="button"><X size={15} /></button></div>}
 
-      {section === "discussion" && selectedPost ? (
+      {section === "live" ? liveLobby : section === "discussion" && selectedPost ? (
         <div className="community-detail-layout">
           <main className="community-post-detail">
             <button className="community-detail-back" onClick={() => setSelectedPost(null)} type="button"><ArrowLeft size={17} />返回讨论区</button>
