@@ -140,7 +140,7 @@ async function generateMove(state, visits, maxSeconds) {
   const size = Number(state.size);
   await sendCommand(`boardsize ${size}`);
   await sendCommand("clear_board");
-  await sendCommand("komi 6.5");
+  await sendCommand("komi 7.5");
   await sendCommand("kata-set-rules chinese");
   await sendCommand(`kata-set-param maxVisits ${Math.max(50, Math.min(5000, visits))}`);
   await sendCommand(`kata-set-param maxTime ${Math.max(2, Math.min(60, maxSeconds))}`);

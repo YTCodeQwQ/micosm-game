@@ -162,6 +162,7 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(page, /mobile-direction-pad/);
   assert.match(page, /确认落子/);
   assert.match(page, /结束并数子/);
+  assert.match(page, /等效白加 7\.5 点/);
   assert.match(page, /确认结果/);
   assert.match(page, /onDoubleClick/);
   assert.match(page, /is-opponent/);

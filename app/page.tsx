@@ -62,7 +62,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { activateMatch, applyMatchAction, createMatchState, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchState as RemoteMatchState, type SpectatorPolicy } from "../lib/match-engine";
+import { activateMatch, applyMatchAction, createMatchState, scoreGoPosition, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchState as RemoteMatchState, type SpectatorPolicy } from "../lib/match-engine";
 import { RANK_NAMES, rankLabel } from "../lib/rank";
 import { STORY_SEASON_ONE, STORY_SEASON_TITLE } from "../lib/story-season-one";
 import { ModerationPanel } from "../components/ModerationPanel";
@@ -2253,6 +2253,11 @@ export default function HomePage() {
   const blackLabel = room?.players.black ? `${room.players.black} · 黑方` : "黑方";
   const whiteLabel = room?.players.white ? `${room.players.white} · 白方` : "白方";
   const goCapturesVisible = remoteState?.game === "go" ? remoteState.captures ?? { black: 0, white: 0 } : { black: 0, white: 0 };
+  const goScoreVisible = remoteState?.game === "go"
+    ? remoteState.finalScore
+      ?? remoteState.goScoring?.score
+      ?? (remoteState.status === "scoring" ? scoreGoPosition(remoteState.board, remoteState.goScoring?.dead ?? []) : null)
+    : null;
   const matchEnded = remoteState?.status === "ended";
   const undoRequest = remoteState?.undoRequest ?? null;
   const rematchRequest = remoteState?.rematchRequest ?? null;
@@ -2657,7 +2662,7 @@ export default function HomePage() {
             <div className={`move-confirm-bar ${canChooseMove ? "is-actionable" : "is-waiting"}`}>
               <div className={`move-selection-copy ${canFinishGoAgainstAi || canConfirmAiGoScore ? "has-go-action" : ""}`}>
                 <CircleDot size={18} />
-                <span><strong>{remoteState?.status === "scoring" ? "终局数子" : pendingMove ? `第 ${pendingMove[0] + 1} 行 · 第 ${pendingMove[1] + 1} 列` : canFinishGoAgainstAi ? "电脑已停一手" : "选择落点"}</strong><small>{remoteState?.status === "scoring" ? "可点选棋子标记死子，确认后自动判定胜负" : canFinishGoAgainstAi ? "继续落子，或结束对局进入数子" : canChooseMove ? pendingMove ? isPendingMoveLegal(pendingMove) ? "位置可落子，确认后提交" : "当前位置不可落子" : "单击选择，双击可直接落子" : "等待对手落子后再确认"}</small></span>
+                <span><strong>{remoteState?.status === "scoring" ? goScoreVisible ? `暂计 黑 ${goScoreVisible.black} · 白 ${goScoreVisible.white}` : "终局数子" : pendingMove ? `第 ${pendingMove[0] + 1} 行 · 第 ${pendingMove[1] + 1} 列` : canFinishGoAgainstAi ? "电脑已停一手" : "选择落点"}</strong><small>{remoteState?.status === "scoring" ? "可点选棋子标记死子，双方确认后按当前结果判定胜负" : canFinishGoAgainstAi ? "继续落子，或结束对局进入数子" : canChooseMove ? pendingMove ? isPendingMoveLegal(pendingMove) ? "位置可落子，确认后提交" : "当前位置不可落子" : "单击选择，双击可直接落子" : "等待对手落子后再确认"}</small></span>
                 {canFinishGoAgainstAi && <button className="go-end-action" disabled={actionBusy} onClick={() => void submitMatchAction({ type: "pass" })} type="button"><Flag size={14} />结束并数子</button>}
                 {canConfirmAiGoScore && <button className="go-end-action confirm-score" disabled={actionBusy} onClick={() => void submitMatchAction({ type: "confirmScore" })} type="button"><Check size={14} />确认结果</button>}
               </div>
@@ -2712,14 +2717,14 @@ export default function HomePage() {
 
           <section className="score-block">
             <span className="info-label">比分</span>
-            {activeGame === "go" && <><ScoreRow color="black" label={`${blackLabel}提子`} value={goCapturesVisible.black} /><ScoreRow color="white" label={`${whiteLabel}提子`} value={goCapturesVisible.white} />{matchEnded && <><ScoreRow label={`${blackLabel}数子`} value={remoteState?.finalScore?.black ?? 0} /><ScoreRow label={`${whiteLabel}数子`} value={remoteState?.finalScore?.white ?? 0} /></>}</>}
+            {activeGame === "go" && <><ScoreRow color="black" label={`${blackLabel}提子`} value={goCapturesVisible.black} /><ScoreRow color="white" label={`${whiteLabel}提子`} value={goCapturesVisible.white} />{goScoreVisible && <><ScoreRow label={`${blackLabel}${matchEnded ? "数子" : "暂计"}`} value={goScoreVisible.black} /><ScoreRow label={`${whiteLabel}${matchEnded ? "数子" : "暂计"}`} value={goScoreVisible.white} /></>}</>}
             {activeGame === "reversi" && <><ScoreRow color="black" label={blackLabel} value={reversiScore.black} /><ScoreRow color="white" label={whiteLabel} value={reversiScore.white} /></>}
             {activeGame === "gomoku" && <><ScoreRow color="black" label={blackLabel} value={visibleGomokuBoard.flat().filter((stone) => stone === "black").length} /><ScoreRow color="white" label={whiteLabel} value={visibleGomokuBoard.flat().filter((stone) => stone === "white").length} /></>}
           </section>
 
           <section className="rule-block">
             <span className="info-label">规则</span>
-            <p>{activeGame === "go" && "中国数子法，白贴 6.5 目；全局同形禁着，双停后双方标记死子并确认。"}{activeGame === "gomoku" && `黑方先行，率先连成五子获胜。${remoteState?.gomokuForbidden ? "本局启用三三、四四与长连禁手。" : "本局不启用禁手。"}`}{activeGame === "reversi" && "夹住对手棋子并翻转，终局棋子较多者获胜。"}</p>
+            <p>{activeGame === "go" && "中国数子法，黑贴 3 又 3/4 子（等效白加 7.5 点）；全局同形禁着，双停后双方标记死子并确认。"}{activeGame === "gomoku" && `黑方先行，率先连成五子获胜。${remoteState?.gomokuForbidden ? "本局启用三三、四四与长连禁手。" : "本局不启用禁手。"}`}{activeGame === "reversi" && "夹住对手棋子并翻转，终局棋子较多者获胜。"}</p>
           </section>
 
           <div className="focus-note"><Sparkles size={18} /><div><strong>{room ? room.mode === "ranked" ? "排位对局" : room.mode === "matchmaking" ? "服务器匹配" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.title ?? "标准"}` : `邀请码 ${room.id}` : "多人模式"}</strong><p>{room ? `${roomRole} · ${room.opponentReady ? opponentDisplayName ? `${room.mode === "ai" ? "电脑棋手" : "对手"} ${opponentDisplayName}` : "双方已连接" : "等待对手"}` : "可以随机匹配，也可以邀请好友。"}</p></div></div>

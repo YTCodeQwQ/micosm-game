@@ -334,3 +334,63 @@ test("an opponent that stays disconnected for thirty seconds loses by departure"
   const record = history.data.records.find((item) => item.roomId === roomId);
   assert.equal(record?.reason, "departure");
 });
+
+test("Go scoring uses the same 7.5 point komi through the room API", { skip: !origin }, async () => {
+  const black = new TestClient();
+  const white = new TestClient();
+  await register(black, uniqueIdentity("V02K", "151"));
+  await register(white, uniqueIdentity("V02W", "152"));
+
+  const created = await black.post("/api/match", {
+    type: "create",
+    game: "go",
+    size: 9,
+    colorPreference: "black",
+  });
+  assert.equal(created.response.status, 201, JSON.stringify(created.data));
+  const roomId = created.data.room.id;
+  const joined = await white.post("/api/match", { type: "join", roomId });
+  assert.equal(joined.response.status, 200, JSON.stringify(joined.data));
+
+  const blackPass = await black.post("/api/match", {
+    type: "action",
+    roomId,
+    playerId: created.data.playerId,
+    actionId: crypto.randomUUID(),
+    action: { type: "pass" },
+  });
+  assert.equal(blackPass.response.status, 200, JSON.stringify(blackPass.data));
+
+  const whitePass = await white.post("/api/match", {
+    type: "action",
+    roomId,
+    playerId: joined.data.playerId,
+    actionId: crypto.randomUUID(),
+    action: { type: "pass" },
+  });
+  assert.equal(whitePass.response.status, 200, JSON.stringify(whitePass.data));
+  assert.equal(whitePass.data.room.state.status, "scoring");
+  assert.deepEqual(whitePass.data.room.state.goScoring.score, { black: 0, white: 7.5 });
+
+  const blackConfirmed = await black.post("/api/match", {
+    type: "action",
+    roomId,
+    playerId: created.data.playerId,
+    actionId: crypto.randomUUID(),
+    action: { type: "confirmScore" },
+  });
+  assert.equal(blackConfirmed.response.status, 200, JSON.stringify(blackConfirmed.data));
+  assert.equal(blackConfirmed.data.room.state.status, "scoring");
+
+  const whiteConfirmed = await white.post("/api/match", {
+    type: "action",
+    roomId,
+    playerId: joined.data.playerId,
+    actionId: crypto.randomUUID(),
+    action: { type: "confirmScore" },
+  });
+  assert.equal(whiteConfirmed.response.status, 200, JSON.stringify(whiteConfirmed.data));
+  assert.equal(whiteConfirmed.data.room.state.status, "ended");
+  assert.equal(whiteConfirmed.data.room.state.winner, "white");
+  assert.deepEqual(whiteConfirmed.data.room.state.finalScore, { black: 0, white: 7.5 });
+});

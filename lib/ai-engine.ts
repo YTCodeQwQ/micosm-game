@@ -216,6 +216,27 @@ function groupLiberties(board: MatchStone[][], startRow: number, startCol: numbe
   return liberties.size;
 }
 
+function goRegionBorders(board: MatchStone[][], startRow: number, startCol: number) {
+  const borders = new Set<MatchPlayer>();
+  const seen = new Set<string>();
+  const stack: MatchPoint[] = [[startRow, startCol]];
+  while (stack.length) {
+    const [row, col] = stack.pop() as MatchPoint;
+    const key = `${row}:${col}`;
+    if (seen.has(key) || board[row]?.[col]) continue;
+    seen.add(key);
+    for (const [dr, dc] of neighbors) {
+      const nextRow = row + dr;
+      const nextCol = col + dc;
+      if (!inside(board.length, nextRow, nextCol)) continue;
+      const stone = board[nextRow][nextCol];
+      if (stone) borders.add(stone);
+      else if (!seen.has(`${nextRow}:${nextCol}`)) stack.push([nextRow, nextCol]);
+    }
+  }
+  return borders;
+}
+
 function goCandidates(state: MatchState) {
   const player = state.turn;
   const beforeCaptures = state.captures?.[player] ?? 0;
@@ -249,11 +270,19 @@ function goCandidates(state: MatchState) {
 function chooseGo(state: MatchState, difficulty: AiDifficulty, random: RandomSource) {
   const candidates = goCandidates(state);
   if (!candidates.length) return { type: "pass" } as MatchAction;
-  const occupied = state.board.flat().filter(Boolean).length;
-  if (occupied > state.size * state.size * .88 && (state.passes ?? 0) > 0) return { type: "pass" };
-  if (difficulty === "easy") return shuffledBest(candidates, random, Math.min(30, candidates.length))?.action ?? null;
-  if (difficulty === "normal") return shuffledBest(candidates, random, 10)?.action ?? null;
-  return shuffledBest(candidates, random, difficulty === "master" ? 1 : 3)?.action ?? null;
+  const beforeCaptures = state.captures?.[state.turn] ?? 0;
+  const endgameCandidates = (state.passes ?? 0) > 0
+    ? candidates.filter((candidate) => {
+      if (candidate.action.type !== "play") return false;
+      const captures = (candidate.next.captures?.[state.turn] ?? 0) - beforeCaptures;
+      if (captures > 0) return true;
+      return goRegionBorders(state.board, candidate.action.row, candidate.action.col).size !== 1;
+    })
+    : candidates;
+  if (!endgameCandidates.length) return { type: "pass" } as MatchAction;
+  if (difficulty === "easy") return shuffledBest(endgameCandidates, random, Math.min(30, endgameCandidates.length))?.action ?? null;
+  if (difficulty === "normal") return shuffledBest(endgameCandidates, random, 10)?.action ?? null;
+  return shuffledBest(endgameCandidates, random, difficulty === "master" ? 1 : 3)?.action ?? null;
 }
 
 export function chooseBuiltInAiAction(state: MatchState, difficulty: AiDifficulty, random: RandomSource = Math.random): MatchAction {

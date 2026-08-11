@@ -68,3 +68,13 @@ test("Go AI passes when no legal point remains", () => {
   assert.equal(next.passes, 1);
   assert.equal(next.turn, "black");
 });
+
+test("Go AI agrees to score after a pass when only settled territory remains", () => {
+  const state = activateMatch(createMatchState("go", 9));
+  state.board = Array.from({ length: 9 }, () => Array(9).fill("black"));
+  state.board[4][4] = null;
+  state.turn = "black";
+  state.passes = 1;
+
+  assert.deepEqual(chooseBuiltInAiAction(state, "normal", fixedRandom), { type: "pass" });
+});

@@ -16,7 +16,10 @@ export type UndoRequest = { requester: MatchPlayer };
 export type RematchRequest = { requester: MatchPlayer };
 export type MatchSnapshot = Omit<MatchState, "undoRequest" | "undoSnapshot" | "rematchRequest">;
 export type MatchClock = { blackMs: number; whiteMs: number; activeSince: number | null };
-export type GoScoring = { dead: MatchPoint[]; confirmations: MatchPlayer[] };
+export type GoScore = { black: number; white: number };
+export type GoScoring = { dead: MatchPoint[]; confirmations: MatchPlayer[]; score?: GoScore };
+
+export const GO_KOMI = 7.5;
 export type SpectatorPolicy = "off" | "friends" | "public";
 
 export const RANK_TURN_MS: Record<"go" | "gomoku", number> = {
@@ -37,7 +40,7 @@ export type MatchState = {
   passes?: number;
   history?: string[];
   moves?: MatchMove[];
-  finalScore?: { black: number; white: number };
+  finalScore?: GoScore;
   lastPlayer?: MatchPlayer | null;
   undoRequest?: UndoRequest | null;
   undoSnapshot?: MatchSnapshot | null;
@@ -247,7 +250,11 @@ function createSnapshot(state: MatchState): MatchSnapshot {
     history: state.history ? [...state.history] : undefined,
     moves: state.moves ? state.moves.map((move) => ({ ...move })) : undefined,
     finalScore: state.finalScore ? { ...state.finalScore } : undefined,
-    goScoring: state.goScoring ? { dead: state.goScoring.dead.map((point) => [...point] as MatchPoint), confirmations: [...state.goScoring.confirmations] } : undefined,
+    goScoring: state.goScoring ? {
+      dead: state.goScoring.dead.map((point) => [...point] as MatchPoint),
+      confirmations: [...state.goScoring.confirmations],
+      score: state.goScoring.score ? { ...state.goScoring.score } : undefined,
+    } : undefined,
   };
   delete snapshot.undoRequest;
   delete snapshot.undoSnapshot;
@@ -355,7 +362,14 @@ function playGo(state: MatchState, row: number, col: number): MatchState {
 
 function passGo(state: MatchState): MatchState {
   if ((state.passes ?? 0) === 1) {
-    return { ...state, status: "scoring" as const, passes: 2, goScoring: { dead: [], confirmations: [] }, notice: "双方已停一手，请标记死子并确认数目" };
+    const score = scoreGoPosition(state.board);
+    return {
+      ...state,
+      status: "scoring" as const,
+      passes: 2,
+      goScoring: { dead: [], confirmations: [], score },
+      notice: `双方已停一手，暂计黑 ${score.black}、白 ${score.white}（含贴子），请标记死子并确认`,
+    };
   }
   const rival = opponent(state.turn);
   return { ...state, turn: rival, passes: 1, history: [...(state.history ?? []), boardKey(state.board)], notice: `${playerName(state.turn)}停一手，${playerName(rival)}行动` };
@@ -370,7 +384,12 @@ function markDeadGroup(state: MatchState, player: MatchPlayer, row: number, col:
   const removing = group.every(([r, c]) => dead.has(`${r}-${c}`));
   group.forEach(([r, c]) => removing ? dead.delete(`${r}-${c}`) : dead.add(`${r}-${c}`));
   const nextDead = [...dead].map((key) => key.split("-").map(Number) as MatchPoint);
-  return { ...state, goScoring: { dead: nextDead, confirmations: [] }, notice: `${playerName(player)}调整了死子标记，请双方重新确认` };
+  const score = scoreGoPosition(state.board, nextDead);
+  return {
+    ...state,
+    goScoring: { dead: nextDead, confirmations: [], score },
+    notice: `${playerName(player)}调整了死子标记，暂计黑 ${score.black}、白 ${score.white}，请双方重新确认`,
+  };
 }
 
 function confirmGoScore(state: MatchState, player: MatchPlayer): MatchState {
@@ -380,9 +399,7 @@ function confirmGoScore(state: MatchState, player: MatchPlayer): MatchState {
   if (confirmations.length < 2) {
     return { ...state, goScoring: { ...scoring, confirmations }, notice: `${playerName(player)}已确认，等待对手确认数目` };
   }
-  const board = copyBoard(state.board);
-  scoring.dead.forEach(([row, col]) => { board[row][col] = null; });
-  const finalScore = scoreGo(board);
+  const finalScore = scoreGoPosition(state.board, scoring.dead);
   const winner: MatchWinner = finalScore.black === finalScore.white ? "draw" : finalScore.black > finalScore.white ? "black" : "white";
   return {
     ...state,
@@ -409,9 +426,13 @@ function resumeGo(state: MatchState, player: MatchPlayer): MatchState {
   };
 }
 
-function scoreGo(board: MatchStone[][]) {
+export function scoreGoPosition(source: MatchStone[][], dead: MatchPoint[] = []): GoScore {
+  const board = copyBoard(source);
+  dead.forEach(([row, col]) => {
+    if (inside(board, row, col)) board[row][col] = null;
+  });
   let black = 0;
-  let white = 6.5;
+  let white = GO_KOMI;
   const seen = new Set<string>();
   board.forEach((line, row) => line.forEach((stone, col) => {
     if (stone === "black") black += 1;

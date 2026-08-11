@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { activateMatch, applyMatchAction, createMatchState, MatchRuleError } from "../lib/match-engine.ts";
+import { activateMatch, applyMatchAction, createMatchState, GO_KOMI, MatchRuleError, scoreGoPosition } from "../lib/match-engine.ts";
 
 test("Go rejects a move that recreates any earlier board position", () => {
   const state = activateMatch(createMatchState("go", 9));
@@ -22,13 +22,31 @@ test("Go enters scoring after two passes and requires both confirmations", () =>
   state = applyMatchAction(state, "white", { type: "pass" });
 
   assert.equal(state.status, "scoring");
+  assert.deepEqual(state.goScoring?.score, { black: 81, white: GO_KOMI });
   state = applyMatchAction(state, "black", { type: "markDead", row: 4, col: 4 });
   assert.deepEqual(state.goScoring?.dead, [[4, 4]]);
+  assert.deepEqual(state.goScoring?.score, { black: 0, white: GO_KOMI });
   state = applyMatchAction(state, "black", { type: "confirmScore" });
   assert.equal(state.status, "scoring");
   state = applyMatchAction(state, "white", { type: "confirmScore" });
   assert.equal(state.status, "ended");
   assert.equal(state.winner, "white");
+});
+
+test("Go uses Chinese area scoring with 7.5 point equivalent komi", () => {
+  const empty = Array.from({ length: 9 }, () => Array(9).fill(null));
+  assert.equal(GO_KOMI, 7.5);
+  assert.deepEqual(scoreGoPosition(empty), { black: 0, white: 7.5 });
+
+  empty[4][4] = "black";
+  assert.deepEqual(scoreGoPosition(empty), { black: 81, white: 7.5 });
+});
+
+test("Go scoring removes agreed dead stones before deciding the winner", () => {
+  const board = Array.from({ length: 9 }, () => Array(9).fill("black"));
+  board[4][4] = "white";
+  assert.deepEqual(scoreGoPosition(board), { black: 80, white: 8.5 });
+  assert.deepEqual(scoreGoPosition(board, [[4, 4]]), { black: 81, white: 7.5 });
 });
 
 test("Go players can resume from scoring", () => {
