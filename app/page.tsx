@@ -207,6 +207,9 @@ type HistoryRecordDetail = HistoryRecord & { state: RemoteMatchState };
 type SavedHistoryRecord = HistoryRecord & { sourceRecordId: string | null; title: string; savedAt: number };
 type HistoryReview = { record: HistoryRecordDetail; frames: ReviewFrame[]; index: number; source: "history" | "saved" | "import"; file?: MicosmGameFile };
 type HistoryTab = "recent" | "saved";
+type ReplaySpeed = 0.5 | 1 | 2 | 4;
+
+const REPLAY_SPEEDS: ReplaySpeed[] = [0.5, 1, 2, 4];
 
 function gameFileFromHistoryRecord(record: HistoryRecordDetail) {
   return createMicosmGameFile({
@@ -606,7 +609,9 @@ function buildReviewFrames(state: RemoteMatchState): ReviewFrame[] {
         lastMove: replayState.lastMove,
         actor: move.player,
         moveNumber,
-        description: move.type === "play" ? `${playerName(move.player)}落子` : move.type === "pass" ? `${playerName(move.player)}停一手` : "继续对局",
+        description: move.type === "play"
+          ? `${playerName(move.player)}落子 · ${reviewMoveCoordinate(state.game, state.size, move.row, move.col)}`
+          : move.type === "pass" ? `${playerName(move.player)}停一手` : "继续对局",
         insight,
       });
     }
@@ -614,6 +619,13 @@ function buildReviewFrames(state: RemoteMatchState): ReviewFrame[] {
   } catch {
     return [finalFrame];
   }
+}
+
+function reviewMoveCoordinate(game: MatchGame, size: number, row: number, col: number) {
+  const columns = game === "go" ? "ABCDEFGHJKLMNOPQRSTUVWXYZ" : "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const column = columns[col] ?? String(col + 1);
+  const line = game === "reversi" ? row + 1 : size - row;
+  return `${column}${line}`;
 }
 
 export default function HomePage() {
@@ -628,6 +640,8 @@ export default function HomePage() {
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [historyReview, setHistoryReview] = useState<HistoryReview | null>(null);
+  const [historyPlaying, setHistoryPlaying] = useState(false);
+  const [historyPlaybackSpeed, setHistoryPlaybackSpeed] = useState<ReplaySpeed>(1);
   const [boardScale, setBoardScale] = useState(100);
   const [room, setRoom] = useState<RoomView | null>(null);
   const [playerId, setPlayerId] = useState("");
@@ -764,6 +778,20 @@ export default function HomePage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!historyPlaying || !historyReview) return;
+    if (historyReview.index >= historyReview.frames.length - 1) {
+      const stopTimer = window.setTimeout(() => setHistoryPlaying(false), 0);
+      return () => window.clearTimeout(stopTimer);
+    }
+    const stepTimer = window.setTimeout(() => {
+      setHistoryReview((current) => current
+        ? { ...current, index: Math.min(current.frames.length - 1, current.index + 1) }
+        : current);
+    }, Math.round(900 / historyPlaybackSpeed));
+    return () => window.clearTimeout(stepTimer);
+  }, [historyPlaybackSpeed, historyPlaying, historyReview]);
 
   useEffect(() => {
     let disposed = false;
@@ -1760,9 +1788,34 @@ export default function HomePage() {
   function openHistoryView() {
     if (room) return showToast("请先结束或退出当前房间");
     setAccountOpen(false);
+    setHistoryPlaying(false);
     setHistoryReview(null);
     setHistoryTab("recent");
     setMainView("history");
+  }
+
+  function closeHistoryReview() {
+    setHistoryPlaying(false);
+    setHistoryReview(null);
+  }
+
+  function moveHistoryReview(index: number) {
+    setHistoryPlaying(false);
+    setHistoryReview((current) => current
+      ? { ...current, index: Math.max(0, Math.min(current.frames.length - 1, index)) }
+      : current);
+  }
+
+  function toggleHistoryPlayback() {
+    if (!historyReview) return;
+    if (historyPlaying) {
+      setHistoryPlaying(false);
+      return;
+    }
+    if (historyReview.index >= historyReview.frames.length - 1) {
+      setHistoryReview((current) => current ? { ...current, index: 0 } : current);
+    }
+    setHistoryPlaying(true);
   }
 
   async function refreshSavedHistory() {
@@ -1781,6 +1834,7 @@ export default function HomePage() {
       const data = await response.json() as { record?: HistoryRecordDetail; error?: { message?: string } };
       if (!response.ok || !data.record) throw new Error(data.error?.message ?? "读取棋谱失败");
       const frames = buildReviewFrames(data.record.state);
+      setHistoryPlaying(false);
       setHistoryReview({ record: data.record, frames, index: frames.length - 1, source: "history" });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
@@ -1800,6 +1854,7 @@ export default function HomePage() {
       if (!response.ok || !data.record) throw new Error(data.error?.message ?? "读取云端棋谱失败");
       const file = data.record.file ? parseMicosmGameFile(data.record.file) : gameFileFromHistoryRecord(data.record);
       const frames = buildReviewFrames(data.record.state);
+      setHistoryPlaying(false);
       setHistoryReview({ record: data.record, frames, index: frames.length - 1, source: "saved", file });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
@@ -1887,7 +1942,7 @@ export default function HomePage() {
       const data = await response.json() as { error?: { message?: string } };
       if (!response.ok) throw new Error(data.error?.message ?? "删除棋谱失败");
       setSavedHistoryRecords((records) => records.filter((record) => record.id !== id));
-      if (historyReview?.source === "saved" && historyReview.record.id === id) setHistoryReview(null);
+      if (historyReview?.source === "saved" && historyReview.record.id === id) closeHistoryReview();
       showToast("云端棋谱已删除", "success");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "删除棋谱失败", "warning");
@@ -1904,6 +1959,7 @@ export default function HomePage() {
       const parsed = parseMicosmGameFile(JSON.parse(await file.text()) as unknown);
       const record = historyRecordFromGameFile(parsed);
       const frames = buildReviewFrames(record.state);
+      setHistoryPlaying(false);
       setHistoryReview({ record, frames, index: frames.length - 1, source: "import", file: parsed });
       window.scrollTo({ top: 0, behavior: "smooth" });
       showToast("棋谱已在本地打开", "success");
@@ -2989,8 +3045,8 @@ export default function HomePage() {
           busy={historyBusy}
           error={historyError}
           importInputRef={gameRecordImportRef}
-          onBack={() => { setHistoryReview(null); setMainView("games"); }}
-          onCloseReview={() => setHistoryReview(null)}
+          onBack={() => { closeHistoryReview(); setMainView("games"); }}
+          onCloseReview={closeHistoryReview}
           onDeleteSaved={(id) => void deleteSavedHistoryRecord(id)}
           onDownload={(source, id) => void downloadHistoryRecord(source, id)}
           onDownloadReview={() => {
@@ -3003,9 +3059,10 @@ export default function HomePage() {
             }
           }}
           onImport={(file) => void importGameRecord(file)}
-          onMoveReview={(index) => setHistoryReview((current) => current ? { ...current, index: Math.max(0, Math.min(current.frames.length - 1, index)) } : current)}
+          onMoveReview={moveHistoryReview}
           onOpen={(id) => void openHistoryRecord(id)}
           onOpenSaved={(id) => void openSavedHistoryRecord(id)}
+          onPlaybackSpeedChange={setHistoryPlaybackSpeed}
           onSave={(id) => void saveHistoryRecord(id)}
           onSaveReview={() => {
             if (!historyReview) return;
@@ -3013,6 +3070,9 @@ export default function HomePage() {
             else if (historyReview.source === "import" && historyReview.file) void saveImportedRecord(historyReview.file);
           }}
           onTabChange={setHistoryTab}
+          onTogglePlayback={toggleHistoryPlayback}
+          playbackSpeed={historyPlaybackSpeed}
+          playing={historyPlaying}
           records={historyRecords}
           review={historyReview}
           savedRecords={savedHistoryRecords}
@@ -3519,7 +3579,7 @@ function historyReasonName(reason: HistoryRecord["reason"]) {
   return reason === "resign" ? "认输结束" : reason === "departure" ? "对手离线" : reason === "timeout" ? "本手超时" : reason === "score" ? "双方数子" : reason === "draw" ? "和棋" : "正常终局";
 }
 
-function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onDeleteSaved, onDownload, onDownloadReview, onImport, onMoveReview, onOpen, onOpenSaved, onSave, onSaveReview, onTabChange, records, review, savedRecords, tab }: {
+function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onDeleteSaved, onDownload, onDownloadReview, onImport, onMoveReview, onOpen, onOpenSaved, onPlaybackSpeedChange, onSave, onSaveReview, onTabChange, onTogglePlayback, playbackSpeed, playing, records, review, savedRecords, tab }: {
   busy: boolean;
   error: string;
   importInputRef: RefObject<HTMLInputElement | null>;
@@ -3532,9 +3592,13 @@ function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onD
   onMoveReview: (index: number) => void;
   onOpen: (id: string) => void;
   onOpenSaved: (id: string) => void;
+  onPlaybackSpeedChange: (speed: ReplaySpeed) => void;
   onSave: (id: string) => void;
   onSaveReview: () => void;
   onTabChange: (tab: HistoryTab) => void;
+  onTogglePlayback: () => void;
+  playbackSpeed: ReplaySpeed;
+  playing: boolean;
   records: HistoryRecord[];
   review: HistoryReview | null;
   savedRecords: SavedHistoryRecord[];
@@ -3568,7 +3632,7 @@ function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onD
             )}
           </div>
           <aside className="history-review-info">
-            <div className="history-review-turn"><span>{frame.moveNumber === 0 ? "开局" : `第 ${frame.moveNumber} 手`}</span><strong>{frame.description}</strong><small>{review.index + 1} / {review.frames.length}</small></div>
+            <div className="history-review-turn"><span>{frame.moveNumber === 0 ? "开局" : `第 ${frame.moveNumber} 手`}</span><strong>{frame.description}</strong><small>{review.index} / {Math.max(0, review.frames.length - 1)} 手</small></div>
             <div className={`history-insight ${frame.insight?.tone ?? "info"}`}><Sparkles size={18} /><div><strong>{frame.insight?.title ?? "局面记录"}</strong><p>{frame.insight?.detail ?? "移动时间线，查看每一手之后的棋盘变化。"}</p></div></div>
             <div className="history-match-meta">
               <div><span>模式</span><strong>{historyModeName(record.mode)}</strong></div>
@@ -3578,12 +3642,33 @@ function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onD
             </div>
           </aside>
         </div>
-        <div className="history-timeline">
-          <button aria-label="跳到开局" disabled={review.index === 0} onClick={() => onMoveReview(0)} type="button"><ChevronsLeft size={18} /></button>
-          <button aria-label="上一手" disabled={review.index === 0} onClick={() => onMoveReview(review.index - 1)} type="button"><ChevronLeft size={19} /></button>
-          <div><i style={{ width: `${review.frames.length <= 1 ? 100 : review.index / (review.frames.length - 1) * 100}%` }} /></div>
-          <button aria-label="下一手" disabled={review.index === review.frames.length - 1} onClick={() => onMoveReview(review.index + 1)} type="button"><ChevronRight size={19} /></button>
-          <button aria-label="跳到终局" disabled={review.index === review.frames.length - 1} onClick={() => onMoveReview(review.frames.length - 1)} type="button"><ChevronsRight size={18} /></button>
+        <div className="history-playback">
+          <div className="history-timeline">
+            <button aria-label="跳到开局" disabled={review.index === 0} onClick={() => onMoveReview(0)} title="跳到开局" type="button"><ChevronsLeft size={18} /></button>
+            <button aria-label="上一手" disabled={review.index === 0} onClick={() => onMoveReview(review.index - 1)} title="上一手" type="button"><ChevronLeft size={19} /></button>
+            <button aria-label={playing ? "暂停复盘" : "播放复盘"} className="history-play-toggle" onClick={onTogglePlayback} title={playing ? "暂停" : "播放"} type="button">{playing ? <Pause size={19} /> : <Play size={19} />}</button>
+            <label className="history-progress">
+              <input
+                aria-label="复盘进度"
+                max={Math.max(0, review.frames.length - 1)}
+                min="0"
+                onChange={(event) => onMoveReview(Number(event.currentTarget.value))}
+                step="1"
+                style={{ "--replay-progress": `${review.frames.length <= 1 ? 100 : review.index / (review.frames.length - 1) * 100}%` } as CSSProperties}
+                type="range"
+                value={review.index}
+              />
+              <span>{review.index} / {Math.max(0, review.frames.length - 1)} 手</span>
+            </label>
+            <button aria-label="下一手" disabled={review.index === review.frames.length - 1} onClick={() => onMoveReview(review.index + 1)} title="下一手" type="button"><ChevronRight size={19} /></button>
+            <button aria-label="跳到终局" disabled={review.index === review.frames.length - 1} onClick={() => onMoveReview(review.frames.length - 1)} title="跳到终局" type="button"><ChevronsRight size={18} /></button>
+          </div>
+          <div className="history-playback-speed" aria-label="播放速度">
+            <span>播放速度</span>
+            {REPLAY_SPEEDS.map((speed) => (
+              <button aria-pressed={playbackSpeed === speed} className={playbackSpeed === speed ? "active" : ""} key={speed} onClick={() => onPlaybackSpeedChange(speed)} type="button">{speed}x</button>
+            ))}
+          </div>
         </div>
       </section>
     );

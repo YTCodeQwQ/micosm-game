@@ -12,6 +12,9 @@ Last verified: 2026-08-11
   player explicitly chooses cloud save.
 - Local files use the `.micosm` extension and may be imported back into the
   replay viewer.
+- The replay viewer rebuilds the board from the original move timeline, shows
+  the coordinate of every move, supports frame seeking and can auto-play at
+  0.5x, 1x, 2x or 4x speed.
 
 ## File Contract
 
@@ -37,6 +40,11 @@ Version 1 accepts Go on 9/13/19 lines, Gomoku on 15 lines and Reversi on 8x8.
 Only ended matches with a complete board and recognized move timeline are
 accepted. The parser rejects unsupported versions, files larger than 512 KB,
 invalid stones, out-of-range points, inconsistent winners and unfinished games.
+
+Version 1 records exact move order but do not contain per-move thinking time.
+Auto-play therefore uses a uniform interval selected by the viewer. A future
+format may add optional move timing metadata, but version 1 playback must remain
+available and must never invent historical timing values.
 
 The implementation and source of truth are in `lib/game-record.ts`. Do not add
 an independent parser in another client.

@@ -435,8 +435,14 @@ test("provides public player IDs, resignation, archived matches, and replay anal
   assert.match(historyRoute, /black_user_id = \? OR white_user_id = \?/);
   assert.match(page, /HistoryCenter/);
   assert.match(page, /buildReviewFrames/);
+  assert.match(page, /reviewMoveCoordinate/);
+  assert.match(page, /toggleHistoryPlayback/);
+  assert.match(page, /REPLAY_SPEEDS/);
+  assert.match(page, /aria-label="复盘进度"/);
   assert.match(page, /gomokuWinningPoints/);
   assert.match(page, /type: "resign"/);
   assert.match(styles, /\.history-shell/);
+  assert.match(styles, /\.history-playback-speed/);
+  assert.match(styles, /\.history-progress/);
   assert.match(styles, /\.review-insight-strip/);
 });
