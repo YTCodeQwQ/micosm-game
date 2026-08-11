@@ -249,6 +249,29 @@ export const matchRecords = sqliteTable("match_records", {
   index("match_records_white_history_idx").on(table.whiteUserId, table.endedAt),
 ]);
 
+export const savedGameRecords = sqliteTable("saved_game_records", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  sourceRecordId: text("source_record_id"),
+  title: text("title").notNull(),
+  game: text("game").notNull(),
+  mode: text("mode").notNull(),
+  boardSize: integer("board_size").notNull(),
+  blackName: text("black_name").notNull(),
+  whiteName: text("white_name").notNull(),
+  winner: text("winner").notNull(),
+  reason: text("reason").notNull(),
+  viewerRole: text("viewer_role").notNull(),
+  fileJson: text("file_json").notNull(),
+  startedAt: integer("started_at").notNull(),
+  endedAt: integer("ended_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  index("saved_game_records_user_recent_idx").on(table.userId, table.updatedAt),
+  uniqueIndex("saved_game_records_user_source_unique").on(table.userId, table.sourceRecordId),
+]);
+
 export const rankProfiles = sqliteTable("rank_profiles", {
   userId: text("user_id").notNull(),
   game: text("game").notNull(),

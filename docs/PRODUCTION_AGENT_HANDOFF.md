@@ -27,6 +27,8 @@ Read these documents in order:
 6. [`PRODUCTION_OPERATIONS_DESIGN.md`](PRODUCTION_OPERATIONS_DESIGN.md): planned
    operator console and alerting workflow; planned items are not yet implemented.
 7. [`MOBILE_QA.md`](MOBILE_QA.md): required real-device release matrix.
+8. [`GAME_RECORD_FORMAT.md`](GAME_RECORD_FORMAT.md): cloud-save retention and
+   the versioned local replay-file contract.
 
 The admin-console product design and implementation boundary are in
 [`ADMIN_CONSOLE_DESIGN.md`](ADMIN_CONSOLE_DESIGN.md). `/admin` Phase 1 is

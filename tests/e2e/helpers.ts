@@ -24,6 +24,7 @@ export async function mockSignedInApi(page: Page) {
     if (url.pathname === "/api/lobby") return route.fulfill({ json: { rooms: [], counts: { main: 0, go: 0, gomoku: 0, reversi: 0 } } });
     if (url.pathname === "/api/rank") return route.fulfill({ json: { profiles: {}, position: null, leaderboard: [] } });
     if (url.pathname === "/api/history") return route.fulfill({ json: { records: [] } });
+    if (url.pathname === "/api/saves") return route.fulfill({ json: { records: [], limit: 10 } });
     return route.fulfill({ status: 404, json: { error: { message: "mocked" } } });
   });
 }

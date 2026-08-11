@@ -7,6 +7,7 @@ import { ensureMatchHistorySchema } from "./match-history";
 import { ensureModerationSchema } from "./moderation";
 import { ensureRankSchema } from "./rank";
 import { ensureRateLimitSchema } from "./rate-limit";
+import { ensureSavedGameSchema } from "./saved-games";
 
 type AppStatement = {
   bind(...values: unknown[]): AppStatement;
@@ -105,6 +106,9 @@ async function migrate(d1: AppD1) {
 
   await ensureAdminSchema(d1);
   await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (3, 'admin_console_foundation', ?)").bind(Date.now()).run();
+
+  await ensureSavedGameSchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (4, 'saved_game_library', ?)").bind(Date.now()).run();
 
   await d1.prepare("PRAGMA optimize").run();
 }

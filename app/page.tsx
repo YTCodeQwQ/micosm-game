@@ -18,8 +18,10 @@ import {
   ChevronsRight,
   CircleDot,
   Clock3,
+  Cloud,
   Copy,
   Download,
+  FileUp,
   Gamepad2,
   Flag,
   Globe2,
@@ -40,6 +42,7 @@ import {
   QrCode,
   RotateCcw,
   Search,
+  Save,
   ScanLine,
   Send,
   Settings2,
@@ -63,6 +66,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { activateMatch, applyMatchAction, createMatchState, scoreGoPosition, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchState as RemoteMatchState, type SpectatorPolicy } from "../lib/match-engine";
+import { createMicosmGameFile, gameRecordFilename, MAX_GAME_FILE_BYTES, MICOSM_GAME_FILE_MIME, parseMicosmGameFile, type MicosmGameFile } from "../lib/game-record";
 import { RANK_NAMES, rankLabel } from "../lib/rank";
 import { STORY_SEASON_ONE, STORY_SEASON_TITLE } from "../lib/story-season-one";
 import { ModerationPanel } from "../components/ModerationPanel";
@@ -200,7 +204,48 @@ type HistoryRecord = {
   endedAt: number;
 };
 type HistoryRecordDetail = HistoryRecord & { state: RemoteMatchState };
-type HistoryReview = { record: HistoryRecordDetail; frames: ReviewFrame[]; index: number };
+type SavedHistoryRecord = HistoryRecord & { sourceRecordId: string | null; title: string; savedAt: number };
+type HistoryReview = { record: HistoryRecordDetail; frames: ReviewFrame[]; index: number; source: "history" | "saved" | "import"; file?: MicosmGameFile };
+type HistoryTab = "recent" | "saved";
+
+function gameFileFromHistoryRecord(record: HistoryRecordDetail) {
+  return createMicosmGameFile({
+    title: `${record.game === "go" ? "围棋" : record.game === "gomoku" ? "五子棋" : "黑白棋"} · ${record.players.black} 对 ${record.players.white}`,
+    game: record.game,
+    mode: record.mode,
+    boardSize: record.boardSize,
+    viewerRole: record.role,
+    players: record.players,
+    winner: record.winner,
+    reason: record.reason,
+    state: record.state,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+  });
+}
+
+function historyRecordFromGameFile(file: MicosmGameFile, id = "local-import"): HistoryRecordDetail {
+  const record = file.record;
+  const opponentRole: Player = record.viewerRole === "black" ? "white" : "black";
+  return {
+    id,
+    roomId: id,
+    game: record.game,
+    mode: record.mode,
+    boardSize: record.boardSize,
+    role: record.viewerRole,
+    opponent: { name: record.players[opponentRole], avatarUrl: null },
+    players: record.players,
+    winner: record.winner,
+    result: record.winner === "draw" ? "draw" : record.winner === record.viewerRole ? "win" : "loss",
+    reason: record.reason,
+    moveCount: record.state.moves?.filter((move) => move.type !== "resumeGo").length ?? 0,
+    finalScore: record.state.finalScore ?? null,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+    state: record.state,
+  };
+}
 
 const RANK_EMBLEMS = [
   "/ranks/dust-star.webp",
@@ -578,6 +623,8 @@ export default function HomePage() {
   const [rankData, setRankData] = useState<RankData | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([]);
+  const [savedHistoryRecords, setSavedHistoryRecords] = useState<SavedHistoryRecord[]>([]);
+  const [historyTab, setHistoryTab] = useState<HistoryTab>("recent");
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [historyReview, setHistoryReview] = useState<HistoryReview | null>(null);
@@ -667,6 +714,7 @@ export default function HomePage() {
   const scannedJoinAttempt = useRef("");
   const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
   const scannerCaptureRef = useRef<HTMLInputElement | null>(null);
+  const gameRecordImportRef = useRef<HTMLInputElement | null>(null);
   const scannerControls = useRef<{ stop: () => void } | null>(null);
   const aiRequest = useRef("");
   const announcedAiPass = useRef("");
@@ -932,11 +980,18 @@ export default function HomePage() {
     const timer = window.setTimeout(() => {
       setHistoryBusy(true);
       setHistoryError("");
-      void fetch("/api/history", { cache: "no-store" })
-        .then(async (response) => {
-          const data = await response.json() as { records?: HistoryRecord[]; error?: { message?: string } };
-          if (!response.ok || !data.records) throw new Error(data.error?.message ?? "读取对局记录失败");
-          if (!disposed) setHistoryRecords(data.records);
+      void Promise.all([
+        fetch("/api/history", { cache: "no-store" }),
+        fetch("/api/saves", { cache: "no-store" }),
+      ]).then(async ([historyResponse, savesResponse]) => {
+          const historyData = await historyResponse.json() as { records?: HistoryRecord[]; error?: { message?: string } };
+          const savesData = await savesResponse.json() as { records?: SavedHistoryRecord[]; error?: { message?: string } };
+          if (!historyResponse.ok || !historyData.records) throw new Error(historyData.error?.message ?? "读取对局记录失败");
+          if (!savesResponse.ok || !savesData.records) throw new Error(savesData.error?.message ?? "读取云端棋谱失败");
+          if (!disposed) {
+            setHistoryRecords(historyData.records);
+            setSavedHistoryRecords(savesData.records);
+          }
         })
         .catch((error) => { if (!disposed) setHistoryError(error instanceof Error ? error.message : "读取对局记录失败"); })
         .finally(() => { if (!disposed) setHistoryBusy(false); });
@@ -1706,7 +1761,15 @@ export default function HomePage() {
     if (room) return showToast("请先结束或退出当前房间");
     setAccountOpen(false);
     setHistoryReview(null);
+    setHistoryTab("recent");
     setMainView("history");
+  }
+
+  async function refreshSavedHistory() {
+    const response = await fetch("/api/saves", { cache: "no-store" });
+    const data = await response.json() as { records?: SavedHistoryRecord[]; error?: { message?: string } };
+    if (!response.ok || !data.records) throw new Error(data.error?.message ?? "读取云端棋谱失败");
+    setSavedHistoryRecords(data.records);
   }
 
   async function openHistoryRecord(id: string) {
@@ -1718,12 +1781,138 @@ export default function HomePage() {
       const data = await response.json() as { record?: HistoryRecordDetail; error?: { message?: string } };
       if (!response.ok || !data.record) throw new Error(data.error?.message ?? "读取棋谱失败");
       const frames = buildReviewFrames(data.record.state);
-      setHistoryReview({ record: data.record, frames, index: frames.length - 1 });
+      setHistoryReview({ record: data.record, frames, index: frames.length - 1, source: "history" });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
       setHistoryError(error instanceof Error ? error.message : "读取棋谱失败");
     } finally {
       setHistoryBusy(false);
+    }
+  }
+
+  async function openSavedHistoryRecord(id: string) {
+    if (historyBusy) return;
+    setHistoryBusy(true);
+    setHistoryError("");
+    try {
+      const response = await fetch(`/api/saves?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      const data = await response.json() as { record?: HistoryRecordDetail & { file?: MicosmGameFile }; error?: { message?: string } };
+      if (!response.ok || !data.record) throw new Error(data.error?.message ?? "读取云端棋谱失败");
+      const file = data.record.file ? parseMicosmGameFile(data.record.file) : gameFileFromHistoryRecord(data.record);
+      const frames = buildReviewFrames(data.record.state);
+      setHistoryReview({ record: data.record, frames, index: frames.length - 1, source: "saved", file });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : "读取云端棋谱失败");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  function downloadGameRecord(file: MicosmGameFile) {
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: MICOSM_GAME_FILE_MIME });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = gameRecordFilename(file);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function downloadHistoryRecord(source: "history" | "saved", id: string) {
+    if (historyBusy) return;
+    setHistoryBusy(true);
+    try {
+      const endpoint = source === "history" ? `/api/history?id=${encodeURIComponent(id)}` : `/api/saves?id=${encodeURIComponent(id)}`;
+      const response = await fetch(endpoint, { cache: "no-store" });
+      const data = await response.json() as { record?: HistoryRecordDetail & { file?: MicosmGameFile }; error?: { message?: string } };
+      if (!response.ok || !data.record) throw new Error(data.error?.message ?? "读取棋谱失败");
+      downloadGameRecord(data.record.file ? parseMicosmGameFile(data.record.file) : gameFileFromHistoryRecord(data.record));
+      showToast("棋谱已下载到本地", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "下载棋谱失败", "warning");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function saveHistoryRecord(recordId: string) {
+    if (historyBusy) return;
+    setHistoryBusy(true);
+    try {
+      const response = await fetch("/api/saves", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "archive", recordId }),
+      });
+      const data = await response.json() as { pruned?: number; error?: { message?: string } };
+      if (!response.ok) throw new Error(data.error?.message ?? "保存棋谱失败");
+      await refreshSavedHistory();
+      showToast(data.pruned ? "已保存，最旧的云端棋谱已自动移出" : "棋局已保存到云端", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "保存棋谱失败", "warning");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function saveImportedRecord(file: MicosmGameFile) {
+    if (historyBusy) return;
+    setHistoryBusy(true);
+    try {
+      const response = await fetch("/api/saves", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "import", file }),
+      });
+      const data = await response.json() as { record?: SavedHistoryRecord; pruned?: number; error?: { message?: string } };
+      if (!response.ok || !data.record) throw new Error(data.error?.message ?? "保存棋谱失败");
+      await refreshSavedHistory();
+      setHistoryReview((current) => current ? { ...current, source: "saved", record: { ...current.record, id: data.record?.id ?? current.record.id } } : current);
+      showToast(data.pruned ? "已保存，最旧的云端棋谱已自动移出" : "导入棋谱已保存到云端", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "保存棋谱失败", "warning");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function deleteSavedHistoryRecord(id: string) {
+    if (historyBusy || !window.confirm("从云端棋谱库删除这盘棋？本地已下载的文件不会受影响。")) return;
+    setHistoryBusy(true);
+    try {
+      const response = await fetch(`/api/saves?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(data.error?.message ?? "删除棋谱失败");
+      setSavedHistoryRecords((records) => records.filter((record) => record.id !== id));
+      if (historyReview?.source === "saved" && historyReview.record.id === id) setHistoryReview(null);
+      showToast("云端棋谱已删除", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "删除棋谱失败", "warning");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function importGameRecord(file: File | undefined) {
+    if (!file) return;
+    setHistoryError("");
+    try {
+      if (file.size > MAX_GAME_FILE_BYTES) throw new Error("棋谱文件超过 512 KB");
+      const parsed = parseMicosmGameFile(JSON.parse(await file.text()) as unknown);
+      const record = historyRecordFromGameFile(parsed);
+      const frames = buildReviewFrames(record.state);
+      setHistoryReview({ record, frames, index: frames.length - 1, source: "import", file: parsed });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      showToast("棋谱已在本地打开", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "无法导入这个棋谱文件";
+      setHistoryError(message);
+      showToast(message, "warning");
+    } finally {
+      if (gameRecordImportRef.current) gameRecordImportRef.current.value = "";
     }
   }
 
@@ -2341,7 +2530,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <nav className="mobile-primary-nav" aria-label="手机主导航">
+      <nav className={`mobile-primary-nav ${mainView === "history" ? "history-hidden" : ""}`} aria-label="手机主导航">
         <button className={mainView === "games" && !chatOpen && !friendPanelOpen && !accountOpen ? "active" : ""} onClick={() => { setMainView("games"); setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(false); }} type="button"><Play size={20} fill="currentColor" /><span>游戏</span></button>
         <button className={chatOpen && chatChannel === "world" ? "active" : ""} onClick={() => { setMainView("games"); setFriendPanelOpen(false); setAccountOpen(false); openChat("world"); }} type="button"><Globe2 size={20} /><span>大厅</span>{chatOverview.worldUnread > 0 && <b>{Math.min(chatOverview.worldUnread, 9)}</b>}</button>
         <button className={friendPanelOpen || (chatOpen && chatChannel === "direct") ? "active" : ""} onClick={() => { setChatOpen(false); setAccountOpen(false); setFriendPanelOpen(true); }} type="button"><Users size={20} /><span>好友</span>{friendBadge > 0 && <b>{Math.min(friendBadge, 9)}</b>}</button>
@@ -2799,12 +2988,35 @@ export default function HomePage() {
         <HistoryCenter
           busy={historyBusy}
           error={historyError}
+          importInputRef={gameRecordImportRef}
           onBack={() => { setHistoryReview(null); setMainView("games"); }}
           onCloseReview={() => setHistoryReview(null)}
+          onDeleteSaved={(id) => void deleteSavedHistoryRecord(id)}
+          onDownload={(source, id) => void downloadHistoryRecord(source, id)}
+          onDownloadReview={() => {
+            if (!historyReview) return;
+            try {
+              downloadGameRecord(historyReview.file ?? gameFileFromHistoryRecord(historyReview.record));
+              showToast("棋谱已下载到本地", "success");
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : "下载棋谱失败", "warning");
+            }
+          }}
+          onImport={(file) => void importGameRecord(file)}
           onMoveReview={(index) => setHistoryReview((current) => current ? { ...current, index: Math.max(0, Math.min(current.frames.length - 1, index)) } : current)}
           onOpen={(id) => void openHistoryRecord(id)}
+          onOpenSaved={(id) => void openSavedHistoryRecord(id)}
+          onSave={(id) => void saveHistoryRecord(id)}
+          onSaveReview={() => {
+            if (!historyReview) return;
+            if (historyReview.source === "history") void saveHistoryRecord(historyReview.record.id);
+            else if (historyReview.source === "import" && historyReview.file) void saveImportedRecord(historyReview.file);
+          }}
+          onTabChange={setHistoryTab}
           records={historyRecords}
           review={historyReview}
+          savedRecords={savedHistoryRecords}
+          tab={historyTab}
         />
       ) : mainView === "ranked" ? (
         <RankedLobby
@@ -3007,6 +3219,7 @@ export default function HomePage() {
             <div className="result-note"><Sparkles size={17} /><span>终局棋盘已保留，可以逐手回看这盘棋的每一次选择。</span></div>
             <div className="result-cta">
               <button className="review-action" onClick={startReview} type="button"><RotateCcw size={17} />查看复盘</button>
+              <button className="save-record-action" disabled={historyBusy || !room} onClick={() => { if (room) void saveHistoryRecord(`${room.id}:${room.version}`); }} type="button"><Save size={17} />云端保存</button>
               <button className="result-primary-action" onClick={returnFromResult} type="button">{outcome.mode === "ranked" ? <><Trophy size={16} />返回排位</> : <><Play size={16} />返回游戏大厅</>}</button>
             </div>
             {outcome.mode !== "ranked" && outcome.kind === "result" && (
@@ -3306,15 +3519,26 @@ function historyReasonName(reason: HistoryRecord["reason"]) {
   return reason === "resign" ? "认输结束" : reason === "departure" ? "对手离线" : reason === "timeout" ? "本手超时" : reason === "score" ? "双方数子" : reason === "draw" ? "和棋" : "正常终局";
 }
 
-function HistoryCenter({ busy, error, onBack, onCloseReview, onMoveReview, onOpen, records, review }: {
+function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onDeleteSaved, onDownload, onDownloadReview, onImport, onMoveReview, onOpen, onOpenSaved, onSave, onSaveReview, onTabChange, records, review, savedRecords, tab }: {
   busy: boolean;
   error: string;
+  importInputRef: RefObject<HTMLInputElement | null>;
   onBack: () => void;
   onCloseReview: () => void;
+  onDeleteSaved: (id: string) => void;
+  onDownload: (source: "history" | "saved", id: string) => void;
+  onDownloadReview: () => void;
+  onImport: (file: File | undefined) => void;
   onMoveReview: (index: number) => void;
   onOpen: (id: string) => void;
+  onOpenSaved: (id: string) => void;
+  onSave: (id: string) => void;
+  onSaveReview: () => void;
+  onTabChange: (tab: HistoryTab) => void;
   records: HistoryRecord[];
   review: HistoryReview | null;
+  savedRecords: SavedHistoryRecord[];
+  tab: HistoryTab;
 }) {
   if (review) {
     const frame = review.frames[review.index];
@@ -3323,8 +3547,12 @@ function HistoryCenter({ busy, error, onBack, onCloseReview, onMoveReview, onOpe
       <section className="history-shell history-review-shell" aria-label="历史棋局复盘">
         <header className="history-header">
           <button className="history-back" onClick={onCloseReview} type="button"><ChevronLeft size={18} />对局记录</button>
-          <div><small>ARCHIVED MATCH</small><h1>{historyGameName(record.game)}复盘</h1><p>{record.players.black} 对 {record.players.white} · {record.moveCount} 手</p></div>
-          <span className={`history-result ${record.result}`}>{record.result === "win" ? "胜" : record.result === "loss" ? "负" : "和"}</span>
+          <div><small>{review.source === "saved" ? "CLOUD RECORD" : review.source === "import" ? "LOCAL IMPORT" : "ARCHIVED MATCH"}</small><h1>{historyGameName(record.game)}复盘</h1><p>{record.players.black} 对 {record.players.white} · {record.moveCount} 手</p></div>
+          <div className="history-header-actions">
+            <span className={`history-result ${record.result}`}>{record.result === "win" ? "胜" : record.result === "loss" ? "负" : "和"}</span>
+            {review.source !== "saved" && <button disabled={busy} onClick={onSaveReview} title="保存到云端" type="button"><Cloud size={17} /><span>云端保存</span></button>}
+            <button disabled={busy} onClick={onDownloadReview} title="下载 Micosm 棋谱" type="button"><Download size={17} /><span>下载</span></button>
+          </div>
         </header>
         <div className="history-review-layout">
           <div className="history-board-stage">
@@ -3361,28 +3589,42 @@ function HistoryCenter({ busy, error, onBack, onCloseReview, onMoveReview, onOpe
     );
   }
 
+  const shownRecords = tab === "recent" ? records : savedRecords;
+  const savedSourceIds = new Set(savedRecords.map((record) => record.sourceRecordId).filter(Boolean));
   return (
     <section className="history-shell" aria-label="对局记录">
       <header className="history-header">
         <button className="history-back" onClick={onBack} type="button"><ChevronLeft size={18} />游戏大厅</button>
-        <div><small>MATCH ARCHIVE</small><h1>对局记录</h1><p>保存每一次胜负，也保存当时没有看见的那条棋路。</p></div>
-        <span className="history-count">{records.length} 局</span>
+        <div><small>GAME RECORDS</small><h1>棋谱中心</h1><p>云端保留最近 10 份，也可以下载为 Micosm 棋谱长期收藏。</p></div>
+        <label className="history-import-button"><FileUp size={17} /><span>导入棋谱</span><input accept=".micosm,application/json,application/vnd.micosm.game+json" onChange={(event) => onImport(event.currentTarget.files?.[0])} ref={importInputRef} type="file" /></label>
       </header>
+      <div className="history-tabs" role="tablist">
+        <button aria-selected={tab === "recent"} className={tab === "recent" ? "active" : ""} onClick={() => onTabChange("recent")} role="tab" type="button"><Clock3 size={16} /><span>最近对局</span><b>{records.length}</b></button>
+        <button aria-selected={tab === "saved"} className={tab === "saved" ? "active" : ""} onClick={() => onTabChange("saved")} role="tab" type="button"><Cloud size={16} /><span>云端棋谱</span><b>{savedRecords.length}/10</b></button>
+      </div>
       {error && <div className="history-error"><AlertTriangle size={17} />{error}</div>}
-      {busy && records.length === 0 ? (
+      {tab === "saved" && <div className="history-storage-note"><ShieldCheck size={16} /><span>第 11 份棋谱保存时，最旧的一份会自动移出云端；已经下载到本地的文件不受影响。</span></div>}
+      {busy && shownRecords.length === 0 ? (
         <div className="history-empty"><LoaderCircle className="spin" size={24} /><strong>正在整理棋谱</strong></div>
-      ) : records.length === 0 ? (
-        <div className="history-empty"><Clock3 size={28} /><strong>还没有已保存的棋局</strong><p>完成下一局后，棋谱会自动出现在这里。</p></div>
+      ) : shownRecords.length === 0 ? (
+        <div className="history-empty">{tab === "recent" ? <Clock3 size={28} /> : <Cloud size={28} />}<strong>{tab === "recent" ? "还没有已结束的对局" : "云端棋谱库还是空的"}</strong><p>{tab === "recent" ? "完成下一局后，对局会自动出现在这里。" : "从最近对局保存，或者导入本地的 .micosm 文件。"}</p></div>
       ) : (
         <div className="history-list">
-          {records.map((record) => (
-            <button className="history-row" disabled={busy} key={record.id} onClick={() => onOpen(record.id)} type="button">
-              <span className={`history-result ${record.result}`}>{record.result === "win" ? "胜" : record.result === "loss" ? "负" : "和"}</span>
-              <UserAvatar name={record.opponent.name} src={record.opponent.avatarUrl} />
-              <span className="history-row-main"><small>{historyModeName(record.mode)} · {historyGameName(record.game)}</small><strong>对 {record.opponent.name}</strong><p>{playerName(record.role)} · {record.moveCount} 手 · {historyReasonName(record.reason)}</p></span>
-              <time>{new Date(record.endedAt).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}<small>{new Date(record.endedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small></time>
-              <ChevronRight size={18} />
-            </button>
+          {shownRecords.map((record) => (
+            <article className="history-row" key={record.id}>
+              <button className="history-row-open" disabled={busy} onClick={() => tab === "recent" ? onOpen(record.id) : onOpenSaved(record.id)} type="button">
+                <span className={`history-result ${record.result}`}>{record.result === "win" ? "胜" : record.result === "loss" ? "负" : "和"}</span>
+                <UserAvatar name={record.opponent.name} src={record.opponent.avatarUrl} />
+                <span className="history-row-main"><small>{historyModeName(record.mode)} · {historyGameName(record.game)}</small><strong>{tab === "saved" ? (record as SavedHistoryRecord).title : `对 ${record.opponent.name}`}</strong><p>{playerName(record.role)} · {record.moveCount} 手 · {historyReasonName(record.reason)}</p></span>
+                <time>{new Date(tab === "saved" ? (record as SavedHistoryRecord).savedAt : record.endedAt).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}<small>{new Date(tab === "saved" ? (record as SavedHistoryRecord).savedAt : record.endedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small></time>
+                <ChevronRight size={18} />
+              </button>
+              <div className="history-row-actions">
+                {tab === "recent" && <button className={savedSourceIds.has(record.id) ? "saved" : ""} disabled={busy} onClick={() => onSave(record.id)} title={savedSourceIds.has(record.id) ? "已保存到云端，点击刷新" : "保存到云端"} type="button">{savedSourceIds.has(record.id) ? <Check size={17} /> : <Save size={17} />}<span>{savedSourceIds.has(record.id) ? "已保存" : "保存"}</span></button>}
+                <button disabled={busy} onClick={() => onDownload(tab === "recent" ? "history" : "saved", record.id)} title="下载 Micosm 棋谱" type="button"><Download size={17} /><span>下载</span></button>
+                {tab === "saved" && <button className="delete" disabled={busy} onClick={() => onDeleteSaved(record.id)} title="删除云端棋谱" type="button"><Trash2 size={17} /><span>删除</span></button>}
+              </div>
+            </article>
           ))}
         </div>
       )}

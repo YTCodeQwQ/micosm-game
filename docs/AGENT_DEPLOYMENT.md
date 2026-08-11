@@ -66,10 +66,12 @@ tiers need native services.
 | `app/` | UI and HTTP API routes |
 | `app/api/match/route.ts` | rooms, matchmaking, ranked play and AI orchestration |
 | `app/api/history/route.ts` | authenticated match archive listing and replay loading |
+| `app/api/saves/route.ts` | 10-slot cloud game-record library and imports |
 | `app/admin/` | dedicated administrator workspace |
 | `app/api/admin/` | role-protected administrator APIs |
 | `lib/match-engine.ts` | authoritative board rules and replayable state |
 | `lib/match-history.ts` | idempotent terminal-state archival in `match_records` |
+| `lib/game-record.ts` | versioned `.micosm` export/import contract and validation |
 | `worker/index.ts` | Worker entry point and WebSocket routing |
 | `worker/game-room-hub.ts` | Durable Object WebSocket hub |
 | `worker/platform-hub.ts` | Platform Durable Object for friends, chat and lobby events |
@@ -337,7 +339,9 @@ Use two separate browsers or a browser plus a phone.
     readiness alone does not prove acceptable strength.
 14. Open the match archive from the account menu, load a finished match and
     move through its replay timeline. Verify resignation/departure/timeout
-    reasons and both players' results are correct.
+    reasons and both players' results are correct. Save it to the cloud library,
+    download the `.micosm` file, import it locally and verify the replay. Save
+    11 imported copies and confirm the server retains exactly 10.
 15. Verify desktop and mobile layouts at narrow and wide viewports.
 
 ## 12. Public tunnel and QR guidance

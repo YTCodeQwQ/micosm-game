@@ -231,6 +231,27 @@ test("two users can complete a private match with idempotent actions and diagnos
   const history = await guest.request("/api/history");
   assert.equal(history.response.status, 200, JSON.stringify(history.data));
   assert.equal(history.data.records.filter((record) => record.roomId === roomId).length, 1);
+  const archivedRecord = history.data.records.find((record) => record.roomId === roomId);
+  const cloudSave = await guest.post("/api/saves", { type: "archive", recordId: archivedRecord.id });
+  assert.equal(cloudSave.response.status, 201, JSON.stringify(cloudSave.data));
+  assert.equal(cloudSave.data.record.sourceRecordId, archivedRecord.id);
+
+  const savedDetail = await guest.request(`/api/saves?id=${encodeURIComponent(cloudSave.data.record.id)}`);
+  assert.equal(savedDetail.response.status, 200, JSON.stringify(savedDetail.data));
+  assert.equal(savedDetail.data.record.file.format, "micosm-game-record");
+  assert.equal(savedDetail.data.record.file.version, 1);
+  assert.equal(savedDetail.data.record.state.status, "ended");
+
+  for (let index = 0; index < 11; index += 1) {
+    const imported = await guest.post("/api/saves", { type: "import", file: savedDetail.data.record.file });
+    assert.equal(imported.response.status, 201, JSON.stringify(imported.data));
+  }
+  const cloudLibrary = await guest.request("/api/saves");
+  assert.equal(cloudLibrary.response.status, 200, JSON.stringify(cloudLibrary.data));
+  assert.equal(cloudLibrary.data.records.length, 10);
+  assert.equal(cloudLibrary.data.limit, 10);
+  const removed = await guest.request(`/api/saves?id=${encodeURIComponent(cloudLibrary.data.records[0].id)}`, { method: "DELETE" });
+  assert.equal(removed.response.status, 200, JSON.stringify(removed.data));
 
   const diagnostics = await guest.request(`/api/diagnostics?roomId=${roomId}`);
   assert.equal(diagnostics.response.status, 200, JSON.stringify(diagnostics.data));
