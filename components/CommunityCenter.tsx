@@ -96,9 +96,10 @@ function GameAttachment({ attachment, onOpen }: { attachment: Attachment; onOpen
   );
 }
 
-export function CommunityCenter({ initialSection, onOpenGame, onOpenLiveLobby, onToast, revision, user }: {
+export function CommunityCenter({ initialPostId, initialSection, onOpenGame, onOpenLiveLobby, onToast, revision, user }: {
+  initialPostId: string | null;
   initialSection: "discussion" | "announcements";
-  onOpenGame: (file: MicosmGameFile) => void;
+  onOpenGame: (file: MicosmGameFile, postId: string) => void;
   onOpenLiveLobby: () => void;
   onToast: (message: string, tone?: "info" | "success" | "warning") => void;
   revision: number;
@@ -151,6 +152,12 @@ export function CommunityCenter({ initialSection, onOpenGame, onOpenLiveLobby, o
       setBusy("");
     }
   }, [onToast]);
+
+  useEffect(() => {
+    if (!initialPostId) return;
+    const timer = window.setTimeout(() => void openPost(initialPostId), 0);
+    return () => window.clearTimeout(timer);
+  }, [initialPostId, openPost]);
 
   useEffect(() => {
     let disposed = false;
@@ -287,7 +294,7 @@ export function CommunityCenter({ initialSection, onOpenGame, onOpenLiveLobby, o
               <div className="community-post-tags"><span>{categoryNames[selectedPost.category]}</span>{selectedPost.pinned && <span><Pin size={12} />置顶</span>}</div>
               <h2>{selectedPost.title}</h2>
               <div className="community-post-body">{selectedPost.body.split("\n").map((line, index) => <p key={`${line}-${index}`}>{line || <br />}</p>)}</div>
-              {selectedPost.attachment && <GameAttachment attachment={selectedPost.attachment} onOpen={selectedPost.attachment.file ? () => onOpenGame(selectedPost.attachment?.file as MicosmGameFile) : undefined} />}
+              {selectedPost.attachment && <GameAttachment attachment={selectedPost.attachment} onOpen={selectedPost.attachment.file ? () => onOpenGame(selectedPost.attachment?.file as MicosmGameFile, selectedPost.id) : undefined} />}
               <footer className="community-post-actions">
                 <button className={selectedPost.liked ? "active" : ""} disabled={busy === `like:${selectedPost.id}`} onClick={() => void react(selectedPost, "like")} type="button"><Heart fill={selectedPost.liked ? "currentColor" : "none"} size={17} />{selectedPost.likes}</button>
                 <button className={selectedPost.favorited ? "active" : ""} disabled={busy === `favorite:${selectedPost.id}`} onClick={() => void react(selectedPost, "favorite")} type="button"><Bookmark fill={selectedPost.favorited ? "currentColor" : "none"} size={17} />{selectedPost.favorited ? "已收藏" : "收藏"}</button>

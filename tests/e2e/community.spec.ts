@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { activateMatch, applyMatchAction, createMatchState } from "../../lib/match-engine";
+import { createMicosmGameFile } from "../../lib/game-record";
 import { expectNoHorizontalOverflow, mockSignedInApi } from "./helpers";
 
 const author = {
@@ -20,6 +22,30 @@ const announcement = {
   expiresAt: null,
 };
 
+function communityReplayFile() {
+  let state = activateMatch(createMatchState("gomoku", 15, "black", false));
+  const moves = [
+    ["black", 7, 7], ["white", 0, 0], ["black", 7, 8], ["white", 0, 1],
+    ["black", 7, 9], ["white", 0, 2], ["black", 7, 10], ["white", 0, 3], ["black", 7, 11],
+  ] as const;
+  for (const [player, row, col] of moves) state = applyMatchAction(state, player, { type: "play", row, col });
+  return createMicosmGameFile({
+    title: "社区测试棋谱",
+    game: "gomoku",
+    mode: "private",
+    boardSize: 15,
+    viewerRole: "black",
+    players: { black: "星野棋手", white: "白方棋手" },
+    winner: "black",
+    reason: "win",
+    state,
+    startedAt: 100,
+    endedAt: 200,
+  });
+}
+
+const replayFile = communityReplayFile();
+
 const post = {
   id: "post-1",
   category: "review",
@@ -36,7 +62,15 @@ const post = {
   comments: 1,
   liked: false,
   favorited: false,
-  attachment: null,
+  attachment: {
+    game: "gomoku",
+    boardSize: 15,
+    players: { black: "星野棋手", white: "白方棋手" },
+    winner: "black",
+    reason: "win",
+    moveCount: 9,
+    file: replayFile,
+  },
 };
 
 async function mockCommunity(page: Page) {
@@ -64,6 +98,12 @@ test("mobile community supports discussion, announcements, and posting without o
   await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-main-mobile.png") });
 
   await page.getByRole("heading", { name: post.title }).click();
+  await expect(page.getByText("我会先在右侧做交换。")).toBeVisible();
+  await page.getByRole("button", { name: /查看复盘/ }).click();
+  await expect(page.getByRole("heading", { name: "五子棋复盘" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "返回帖子" })).toBeVisible();
+  await page.getByRole("button", { name: "返回帖子" }).click();
+  await expect(page.getByRole("heading", { name: post.title })).toBeVisible();
   await expect(page.getByText("我会先在右侧做交换。")).toBeVisible();
   await page.getByRole("button", { name: "返回讨论区" }).click();
 

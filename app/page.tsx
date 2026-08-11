@@ -207,7 +207,7 @@ type HistoryRecord = {
 };
 type HistoryRecordDetail = HistoryRecord & { state: RemoteMatchState };
 type SavedHistoryRecord = HistoryRecord & { sourceRecordId: string | null; title: string; savedAt: number };
-type HistoryReview = { record: HistoryRecordDetail; frames: ReviewFrame[]; index: number; source: "history" | "saved" | "import"; file?: MicosmGameFile };
+type HistoryReview = { record: HistoryRecordDetail; frames: ReviewFrame[]; index: number; source: "history" | "saved" | "import" | "community"; file?: MicosmGameFile; returnPostId?: string };
 type HistoryTab = "recent" | "saved";
 type ReplaySpeed = 0.5 | 1 | 2 | 4;
 
@@ -633,6 +633,7 @@ function reviewMoveCoordinate(game: MatchGame, size: number, row: number, col: n
 export default function HomePage() {
   const [mainView, setMainView] = useState<"games" | "community" | "ranked" | "story" | "history">("games");
   const [communityEntry, setCommunityEntry] = useState<"discussion" | "announcements">("discussion");
+  const [communityReturnPostId, setCommunityReturnPostId] = useState<string | null>(null);
   const [latestAnnouncement, setLatestAnnouncement] = useState<HomeAnnouncement | null>(null);
   const [activeGame, setActiveGame] = useState<GameId>("go");
   const [rankedGame, setRankedGame] = useState<RankGame>("go");
@@ -1514,6 +1515,7 @@ export default function HomePage() {
 
   function openCommunity(section: "discussion" | "announcements" = "discussion") {
     if (room) return showToast("请先结束或退出当前对局");
+    setCommunityReturnPostId(null);
     setCommunityEntry(section);
     setMainView("community");
     setChatOpen(false);
@@ -1523,13 +1525,14 @@ export default function HomePage() {
     setLibraryMenuOpen(false);
   }
 
-  function openCommunityGame(file: MicosmGameFile) {
+  function openCommunityGame(file: MicosmGameFile, postId: string) {
     try {
       const parsed = parseMicosmGameFile(file);
       const record = historyRecordFromGameFile(parsed);
       const frames = buildReviewFrames(record.state);
       setHistoryPlaying(false);
-      setHistoryReview({ record, frames, index: frames.length - 1, source: "import", file: parsed });
+      setCommunityReturnPostId(postId);
+      setHistoryReview({ record, frames, index: frames.length - 1, source: "community", file: parsed, returnPostId: postId });
       setMainView("history");
       setChatOpen(false);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1827,6 +1830,7 @@ export default function HomePage() {
 
   function openHistoryView() {
     if (room) return showToast("请先结束或退出当前房间");
+    setCommunityReturnPostId(null);
     setAccountOpen(false);
     setHistoryPlaying(false);
     setHistoryReview(null);
@@ -1835,8 +1839,14 @@ export default function HomePage() {
   }
 
   function closeHistoryReview() {
+    const returnPostId = historyReview?.source === "community" ? historyReview.returnPostId : null;
     setHistoryPlaying(false);
     setHistoryReview(null);
+    if (returnPostId) {
+      setCommunityEntry("discussion");
+      setCommunityReturnPostId(returnPostId);
+      setMainView("community");
+    }
   }
 
   function moveHistoryReview(index: number) {
@@ -3088,7 +3098,8 @@ export default function HomePage() {
       ) : mainView === "community" && authUser ? (
         <CommunityCenter
           initialSection={communityEntry}
-          key={communityEntry}
+          initialPostId={communityReturnPostId}
+          key={`${communityEntry}:${communityReturnPostId ?? "feed"}`}
           onOpenGame={openCommunityGame}
           onOpenLiveLobby={() => { setMainView("games"); openChat("world"); }}
           onToast={showToast}
@@ -3122,7 +3133,7 @@ export default function HomePage() {
           onSaveReview={() => {
             if (!historyReview) return;
             if (historyReview.source === "history") void saveHistoryRecord(historyReview.record.id);
-            else if (historyReview.source === "import" && historyReview.file) void saveImportedRecord(historyReview.file);
+            else if ((historyReview.source === "import" || historyReview.source === "community") && historyReview.file) void saveImportedRecord(historyReview.file);
           }}
           onTabChange={setHistoryTab}
           onTogglePlayback={toggleHistoryPlayback}
@@ -3674,8 +3685,8 @@ function HistoryCenter({ busy, error, importInputRef, onBack, onCloseReview, onD
     return (
       <section className="history-shell history-review-shell" aria-label="历史棋局复盘">
         <header className="history-header">
-          <button className="history-back" onClick={onCloseReview} type="button"><ChevronLeft size={18} />对局记录</button>
-          <div><small>{review.source === "saved" ? "CLOUD RECORD" : review.source === "import" ? "LOCAL IMPORT" : "ARCHIVED MATCH"}</small><h1>{historyGameName(record.game)}复盘</h1><p>{record.players.black} 对 {record.players.white} · {record.moveCount} 手</p></div>
+          <button className="history-back" onClick={onCloseReview} type="button"><ChevronLeft size={18} />{review.source === "community" ? "返回帖子" : "对局记录"}</button>
+          <div><small>{review.source === "saved" ? "CLOUD RECORD" : review.source === "import" ? "LOCAL IMPORT" : review.source === "community" ? "COMMUNITY RECORD" : "ARCHIVED MATCH"}</small><h1>{historyGameName(record.game)}复盘</h1><p>{record.players.black} 对 {record.players.white} · {record.moveCount} 手</p></div>
           <div className="history-header-actions">
             <span className={`history-result ${record.result}`}>{record.result === "win" ? "胜" : record.result === "loss" ? "负" : "和"}</span>
             {review.source !== "saved" && <button disabled={busy} onClick={onSaveReview} title="保存到云端" type="button"><Cloud size={17} /><span>云端保存</span></button>}
