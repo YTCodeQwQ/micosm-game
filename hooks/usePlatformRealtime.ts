@@ -7,6 +7,7 @@ type RealtimeUser = { id: string; role: "player" | "admin" } | null;
 export function usePlatformRealtime(user: RealtimeUser) {
   const [friendsRevision, setFriendsRevision] = useState(0);
   const [chatRevision, setChatRevision] = useState(0);
+  const [communityRevision, setCommunityRevision] = useState(0);
   const [lobbyRevision, setLobbyRevision] = useState(0);
   const userId = user?.id;
   const role = user?.role;
@@ -33,6 +34,7 @@ export function usePlatformRealtime(user: RealtimeUser) {
           const update = JSON.parse(String(event.data)) as { type?: string };
           if (update.type === "friends_updated" || update.type === "presence_updated") setFriendsRevision((value) => value + 1);
           if (update.type === "chat_updated") setChatRevision((value) => value + 1);
+          if (update.type === "community_updated") setCommunityRevision((value) => value + 1);
           if (update.type === "lobby_updated") setLobbyRevision((value) => value + 1);
           if (update.type === "moderation_updated" && role === "admin") setChatRevision((value) => value + 1);
           if (update.type === "account_restricted") window.location.reload();
@@ -56,5 +58,5 @@ export function usePlatformRealtime(user: RealtimeUser) {
     };
   }, [role, userId]);
 
-  return { friendsRevision, chatRevision, lobbyRevision };
+  return { friendsRevision, chatRevision, communityRevision, lobbyRevision };
 }

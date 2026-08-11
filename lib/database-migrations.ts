@@ -1,6 +1,7 @@
 import { ensureAuthSchema } from "./auth";
 import { ensureAdminSchema } from "./admin";
 import { ensureChatSchema } from "./chat";
+import { ensureCommunitySchema } from "./community";
 import { ensureFriendSchema } from "./friends";
 import { ensureMatchDiagnosticsSchema } from "./match-diagnostics";
 import { ensureMatchHistorySchema } from "./match-history";
@@ -109,6 +110,9 @@ async function migrate(d1: AppD1) {
 
   await ensureSavedGameSchema(d1);
   await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (4, 'saved_game_library', ?)").bind(Date.now()).run();
+
+  await ensureCommunitySchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (5, 'community_and_announcements', ?)").bind(Date.now()).run();
 
   await d1.prepare("PRAGMA optimize").run();
 }

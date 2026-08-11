@@ -5,17 +5,18 @@ import Link from "next/link";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, ArrowLeft, Ban, Bot, Check, ChevronRight, CircleGauge, Clock3, Gamepad2, History,
-  LoaderCircle, LogOut, MessageSquareWarning, RefreshCw, Search, ShieldCheck, ShieldX, UserCog,
+  LoaderCircle, LogOut, Megaphone, MessageSquareWarning, RefreshCw, Search, ShieldCheck, ShieldX, UserCog,
   Users, VolumeX, X,
 } from "lucide-react";
 import styles from "./admin.module.css";
+import { AdminAnnouncements } from "./AdminAnnouncements";
 
 type Permission =
   | "overview.read" | "users.read" | "users.sanction" | "users.sessions" | "reports.read" | "reports.write"
   | "matches.read" | "ranking.read" | "ranking.write" | "ai.read" | "ai.write" | "announcements.write"
   | "audit.read" | "roles.write" | "operations.read";
 type AdminRole = "super_admin" | "admin" | "moderator" | "support" | "operator";
-type View = "overview" | "users" | "moderation" | "ai" | "audit";
+type View = "overview" | "users" | "moderation" | "announcements" | "ai" | "audit";
 
 type Overview = {
   actor: { id: string; publicId: string; displayName: string; role: AdminRole; permissions: Permission[] };
@@ -35,7 +36,7 @@ type ManagedUser = {
 };
 type Report = {
   id: string; messageId: string; message: string; createdAt: number; status: string; targetUserId: string | null;
-  senderName: string; reporterName: string; deleted: boolean;
+  senderName: string; reporterName: string; deleted: boolean; source?: "chat" | "community"; targetType?: "message" | "post" | "comment";
 };
 type Sanction = { userId: string; publicId: string; displayName: string; mutedUntil: number | null; bannedUntil: number | null; reason: string };
 type EngineStatus = {
@@ -79,6 +80,7 @@ export default function AdminPage() {
   const [busy, setBusy] = useState("");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [reason, setReason] = useState("");
+  const [announcementRevision, setAnnouncementRevision] = useState(0);
 
   const permissions = useMemo(() => new Set(overview?.actor.permissions ?? []), [overview]);
 
@@ -170,6 +172,7 @@ export default function AdminPage() {
           <NavButton active={view === "overview"} icon={<CircleGauge size={18} />} label="概览" onClick={() => setView("overview")} />
           {permissions.has("users.read") && <NavButton active={view === "users"} icon={<Users size={18} />} label="用户" onClick={() => setView("users")} />}
           {permissions.has("reports.read") && <NavButton active={view === "moderation"} badge={overview.stats.openReports} icon={<MessageSquareWarning size={18} />} label="举报与处罚" onClick={() => setView("moderation")} />}
+          {permissions.has("announcements.write") && <NavButton active={view === "announcements"} icon={<Megaphone size={18} />} label="公告" onClick={() => setView("announcements")} />}
           {permissions.has("ai.read") && <NavButton active={view === "ai"} icon={<Bot size={18} />} label="AI 运行状态" onClick={() => setView("ai")} />}
           {permissions.has("audit.read") && <NavButton active={view === "audit"} icon={<History size={18} />} label="操作审计" onClick={() => setView("audit")} />}
         </nav>
@@ -179,11 +182,13 @@ export default function AdminPage() {
 
       <section className={styles.workspace}>
         <header className={styles.topbar}>
-          <div><small>ADMIN CONSOLE</small><h1>{view === "overview" ? "运行概览" : view === "users" ? "用户与权限" : view === "moderation" ? "举报与处罚" : view === "ai" ? "AI 运行状态" : "操作审计"}</h1></div>
-          <button aria-label="刷新当前页面" onClick={() => { if (view === "overview") void loadOverview(); else if (view === "users") void loadUsers(); else if (view === "moderation") void loadModeration(); else if (view === "ai") void loadAi(); else void loadAudit(); }} type="button"><RefreshCw className={busy.startsWith("load:") ? styles.spin : ""} size={18} /></button>
+          <div><small>ADMIN CONSOLE</small><h1>{view === "overview" ? "运行概览" : view === "users" ? "用户与权限" : view === "moderation" ? "举报与处罚" : view === "announcements" ? "社区公告" : view === "ai" ? "AI 运行状态" : "操作审计"}</h1></div>
+          <button aria-label="刷新当前页面" onClick={() => { if (view === "overview") void loadOverview(); else if (view === "users") void loadUsers(); else if (view === "moderation") void loadModeration(); else if (view === "announcements") setAnnouncementRevision((value) => value + 1); else if (view === "ai") void loadAi(); else void loadAudit(); }} type="button"><RefreshCw className={busy.startsWith("load:") ? styles.spin : ""} size={18} /></button>
         </header>
         {error && <div className={styles.error}><ShieldX size={17} /><span>{error}</span><button onClick={() => setError("")} type="button"><X size={15} /></button></div>}
         {notice && <div className={styles.notice}><Check size={17} />{notice}</div>}
+
+        {view === "announcements" && <AdminAnnouncements onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} revision={announcementRevision} />}
 
         {view === "overview" && <OverviewView data={overview} />}
         {view === "users" && <section className={styles.pageSection}>
@@ -206,9 +211,9 @@ export default function AdminPage() {
 
         {view === "moderation" && <section className={styles.pageSection}>
           <div className={styles.splitHeading}><div><strong>待处理举报</strong><span>{openReports.length}</span></div><small>所有处置都会写入审计日志</small></div>
-          <div className={styles.reportGrid}>{openReports.map((report) => <article className={styles.report} key={report.id}><header><div><strong>{report.senderName}</strong><small>由 {report.reporterName} 举报</small></div><time>{formatTime(report.createdAt)}</time></header><blockquote>{report.deleted ? "消息已删除" : report.message}</blockquote><footer>
+          <div className={styles.reportGrid}>{openReports.map((report) => <article className={styles.report} key={report.id}><header><div><strong>{report.senderName}</strong><small>{report.source === "community" ? report.targetType === "comment" ? "社区评论" : "社区帖子" : "频道消息"} · 由 {report.reporterName} 举报</small></div><time>{formatTime(report.createdAt)}</time></header><blockquote>{report.deleted ? "内容已删除" : report.message}</blockquote><footer>
             <button onClick={() => ask({ title: "忽略举报", description: "保留原消息并关闭这条举报。", confirmLabel: "确认忽略", run: (why) => mutate("/api/admin/moderation", { action: "dismiss", reportId: report.id, reason: why }, "举报已忽略", loadModeration) })} type="button"><Check size={15} />忽略</button>
-            <button disabled={report.deleted} onClick={() => ask({ title: "删除消息", description: "消息会从频道隐藏，相关举报自动结案。", confirmLabel: "删除消息", danger: true, run: (why) => mutate("/api/admin/moderation", { action: "delete_message", reportId: report.id, reason: why }, "消息已删除", loadModeration) })} type="button"><ShieldX size={15} />删除</button>
+            <button disabled={report.deleted} onClick={() => ask({ title: "删除违规内容", description: "内容会从频道或社区隐藏，相关举报自动结案。", confirmLabel: "删除内容", danger: true, run: (why) => mutate("/api/admin/moderation", { action: "delete_message", reportId: report.id, reason: why }, "违规内容已删除", loadModeration) })} type="button"><ShieldX size={15} />删除</button>
             <button disabled={!report.targetUserId} onClick={() => ask({ title: "禁言 10 分钟", description: `暂时限制 ${report.senderName} 发送频道消息。`, confirmLabel: "确认禁言", run: (why) => mutate("/api/admin/moderation", { action: "mute", reportId: report.id, targetUserId: report.targetUserId, durationMinutes: 10, reason: why }, "用户已禁言", loadModeration) })} type="button"><VolumeX size={15} />禁言</button>
             <button className={styles.dangerButton} disabled={!report.targetUserId} onClick={() => ask({ title: "封禁 24 小时", description: `封禁 ${report.senderName} 并吊销其全部登录会话。`, confirmLabel: "确认封禁", danger: true, run: (why) => mutate("/api/admin/moderation", { action: "ban", reportId: report.id, targetUserId: report.targetUserId, durationMinutes: 1440, reason: why }, "用户已封禁", loadModeration) })} type="button"><Ban size={15} />封禁</button>
           </footer></article>)}{!openReports.length && <Empty icon={<ShieldCheck size={22} />} title="举报队列已清空" detail="当前没有等待处理的频道举报。" />}</div>

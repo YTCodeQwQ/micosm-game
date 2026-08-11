@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     count(d1, "SELECT COUNT(*) AS count FROM game_rooms WHERE json_extract(state, '$.status') IN ('waiting', 'playing', 'scoring')"),
     count(d1, "SELECT COUNT(*) AS count FROM match_records WHERE ended_at >= ?", dayAgo),
     count(d1, "SELECT COUNT(*) AS count FROM chat_messages WHERE created_at >= ? AND deleted_at IS NULL", dayAgo),
-    count(d1, "SELECT COUNT(*) AS count FROM chat_reports WHERE status = 'open'"),
+    count(d1, "SELECT (SELECT COUNT(*) FROM chat_reports WHERE status = 'open') + (SELECT COUNT(*) FROM discussion_reports WHERE status = 'open') AS count"),
     count(d1, "SELECT COUNT(*) AS count FROM user_sanctions WHERE COALESCE(muted_until, 0) > ? OR COALESCE(banned_until, 0) > ?", now, now),
     count(d1, "SELECT COUNT(*) AS count FROM ranked_queue"),
   ]);

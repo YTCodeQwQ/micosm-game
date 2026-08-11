@@ -14,7 +14,7 @@
     "ai:supervised": "node scripts/ai-supervisor.mjs",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --experimental-strip-types --test tests/rendered-html.test.mjs tests/match-clock.test.mjs tests/match-rules.test.mjs tests/ai-engine.test.mjs tests/admin-access.test.mjs tests/rapfi-benchmark.test.mjs tests/game-record.test.mjs",
+    "test": "npm run build && node --experimental-strip-types --test tests/rendered-html.test.mjs tests/match-clock.test.mjs tests/match-rules.test.mjs tests/ai-engine.test.mjs tests/admin-access.test.mjs tests/rapfi-benchmark.test.mjs tests/game-record.test.mjs tests/community.test.mjs",
     "test:integration": "node --test tests/match-api.integration.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",

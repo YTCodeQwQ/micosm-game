@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { getD1 } from "../../../../db";
 import { configuredAdminIds, requireAdminPermission, writeAdminAudit } from "../../../../lib/admin";
 import { avatarUrlForKey } from "../../../../lib/auth";
+import { ensureCommunitySchema } from "../../../../lib/community";
 import { ensureAppSchema } from "../../../../lib/database-migrations";
 import { notifyPlatform } from "../../../../lib/platform-realtime";
 
@@ -14,6 +15,23 @@ type ReportRow = {
   resolution: string | null;
   body: string | null;
   deleted_at: number | null;
+  sender_id: string | null;
+  sender_name: string | null;
+  sender_avatar: string | null;
+  reporter_name: string;
+};
+
+type DiscussionReportRow = {
+  id: string;
+  target_type: "post" | "comment";
+  target_id: string;
+  reason: string;
+  created_at: number;
+  status: string;
+  resolution: string | null;
+  title: string | null;
+  body: string | null;
+  content_status: string | null;
   sender_id: string | null;
   sender_name: string | null;
   sender_avatar: string | null;
@@ -34,6 +52,7 @@ export async function GET(request: Request) {
     await ensureAppSchema(d1);
     const auth = await requireAdminPermission(request, d1, adminIds(), "reports.read");
     if (auth.response) return auth.response;
+    await ensureCommunitySchema(d1);
     const reports = await d1.prepare(`SELECT r.id, r.message_id, r.reason, r.created_at, r.status, r.resolution,
         m.body, m.deleted_at, m.sender_id, sender.display_name AS sender_name, sender.avatar_key AS sender_avatar,
         reporter.display_name AS reporter_name
@@ -42,6 +61,16 @@ export async function GET(request: Request) {
       LEFT JOIN users sender ON sender.id = m.sender_id
       JOIN users reporter ON reporter.id = r.reporter_id
       ORDER BY CASE WHEN r.status = 'open' THEN 0 ELSE 1 END, r.created_at DESC LIMIT 100`).all<ReportRow>();
+    const discussionReports = await d1.prepare(`SELECT r.id, r.target_type, r.target_id, r.reason, r.created_at, r.status, r.resolution,
+        p.title, COALESCE(p.body, c.body) AS body, COALESCE(p.status, c.status) AS content_status,
+        COALESCE(p.user_id, c.user_id) AS sender_id, sender.display_name AS sender_name,
+        sender.avatar_key AS sender_avatar, reporter.display_name AS reporter_name
+      FROM discussion_reports r
+      LEFT JOIN discussion_posts p ON r.target_type = 'post' AND p.id = r.target_id
+      LEFT JOIN discussion_comments c ON r.target_type = 'comment' AND c.id = r.target_id
+      LEFT JOIN users sender ON sender.id = COALESCE(p.user_id, c.user_id)
+      JOIN users reporter ON reporter.id = r.reporter_id
+      ORDER BY CASE WHEN r.status = 'open' THEN 0 ELSE 1 END, r.created_at DESC LIMIT 100`).all<DiscussionReportRow>();
     const sanctions = await d1.prepare(`SELECT s.user_id, s.muted_until, s.banned_until, s.reason, s.updated_at,
         u.public_id, u.display_name, u.avatar_key
       FROM user_sanctions s JOIN users u ON u.id = s.user_id
@@ -51,9 +80,11 @@ export async function GET(request: Request) {
         public_id: string | null; display_name: string; avatar_key: string | null;
       }>();
     return Response.json({
-      reports: reports.results.map((row) => ({
+      reports: [...reports.results.map((row) => ({
         id: row.id,
         messageId: row.message_id,
+        source: "chat" as const,
+        targetType: "message" as const,
         reason: row.reason,
         createdAt: row.created_at,
         status: row.status,
@@ -64,7 +95,22 @@ export async function GET(request: Request) {
         senderName: row.sender_name ?? "未知用户",
         senderAvatarUrl: avatarUrlForKey(row.sender_avatar),
         reporterName: row.reporter_name,
-      })),
+      })), ...discussionReports.results.map((row) => ({
+        id: row.id,
+        messageId: row.target_id,
+        source: "community" as const,
+        targetType: row.target_type,
+        reason: row.reason,
+        createdAt: row.created_at,
+        status: row.status,
+        resolution: row.resolution,
+        message: row.body ? `${row.target_type === "post" ? `【帖子】${row.title ?? "无标题"}\n` : "【评论】"}${row.body}` : "内容已不存在",
+        deleted: row.content_status !== "visible",
+        targetUserId: row.sender_id,
+        senderName: row.sender_name ?? "未知用户",
+        senderAvatarUrl: avatarUrlForKey(row.sender_avatar),
+        reporterName: row.reporter_name,
+      }))].sort((left, right) => left.status === right.status ? right.createdAt - left.createdAt : left.status === "open" ? -1 : 1).slice(0, 100),
       sanctions: sanctions.results.map((row) => ({
         userId: row.user_id,
         publicId: row.public_id ?? "",
@@ -87,6 +133,7 @@ export async function POST(request: Request) {
     await ensureAppSchema(d1);
     const auth = await requireAdminPermission(request, d1, adminIds(), "reports.write");
     if (auth.response || !auth.user) return auth.response ?? error("auth_required", "请先登录", 401);
+    await ensureCommunitySchema(d1);
     const payload = await request.json() as {
       action?: "dismiss" | "delete_message" | "mute" | "ban" | "unmute" | "unban";
       reportId?: string;
@@ -104,25 +151,47 @@ export async function POST(request: Request) {
     if (!reason) return error("reason_required", "请输入操作理由", 400);
     let targetUserId = payload.targetUserId?.trim() || null;
     let messageId = payload.messageId?.trim() || null;
+    let reportSource: "chat" | "community" = "chat";
+    let discussionTargetType: "post" | "comment" | null = null;
     if (payload.reportId) {
       const report = await d1.prepare(`SELECT r.message_id, m.sender_id FROM chat_reports r
         LEFT JOIN chat_messages m ON m.id = r.message_id WHERE r.id = ?`).bind(payload.reportId).first<{ message_id: string; sender_id: string | null }>();
-      if (!report) return error("report_not_found", "举报记录不存在", 404);
-      messageId ??= report.message_id;
-      targetUserId ??= report.sender_id;
+      if (report) {
+        messageId ??= report.message_id;
+        targetUserId ??= report.sender_id;
+      } else {
+        const communityReport = await d1.prepare(`SELECT r.target_id, r.target_type, COALESCE(p.user_id, c.user_id) AS sender_id
+          FROM discussion_reports r
+          LEFT JOIN discussion_posts p ON r.target_type = 'post' AND p.id = r.target_id
+          LEFT JOIN discussion_comments c ON r.target_type = 'comment' AND c.id = r.target_id
+          WHERE r.id = ?`).bind(payload.reportId).first<{ target_id: string; target_type: "post" | "comment"; sender_id: string | null }>();
+        if (!communityReport) return error("report_not_found", "举报记录不存在", 404);
+        reportSource = "community";
+        discussionTargetType = communityReport.target_type;
+        messageId ??= communityReport.target_id;
+        targetUserId ??= communityReport.sender_id;
+      }
     }
     if (targetUserId === auth.user.id && ["mute", "ban"].includes(action)) return error("cannot_sanction_self", "不能限制自己的账号", 400);
 
     let durationMs: number | null = null;
     if (action === "dismiss") {
       if (!payload.reportId) return error("missing_report", "缺少举报记录", 400);
-      await d1.prepare("UPDATE chat_reports SET status = 'dismissed', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE id = ?")
+      const table = reportSource === "community" ? "discussion_reports" : "chat_reports";
+      await d1.prepare(`UPDATE ${table} SET status = 'dismissed', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE id = ?`)
         .bind(auth.user.id, now, reason || "dismissed", payload.reportId).run();
     } else if (action === "delete_message") {
       if (!messageId) return error("missing_message", "缺少消息记录", 400);
-      await d1.prepare("UPDATE chat_messages SET deleted_at = COALESCE(deleted_at, ?) WHERE id = ?").bind(now, messageId).run();
-      await d1.prepare("UPDATE chat_reports SET status = 'resolved', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE message_id = ? AND status = 'open'")
-        .bind(auth.user.id, now, reason || "message_deleted", messageId).run();
+      if (reportSource === "community" && discussionTargetType) {
+        const contentTable = discussionTargetType === "post" ? "discussion_posts" : "discussion_comments";
+        await d1.prepare(`UPDATE ${contentTable} SET status = 'hidden', updated_at = ? WHERE id = ?`).bind(now, messageId).run();
+        await d1.prepare("UPDATE discussion_reports SET status = 'resolved', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE target_type = ? AND target_id = ? AND status = 'open'")
+          .bind(auth.user.id, now, reason || "content_hidden", discussionTargetType, messageId).run();
+      } else {
+        await d1.prepare("UPDATE chat_messages SET deleted_at = COALESCE(deleted_at, ?) WHERE id = ?").bind(now, messageId).run();
+        await d1.prepare("UPDATE chat_reports SET status = 'resolved', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE message_id = ? AND status = 'open'")
+          .bind(auth.user.id, now, reason || "message_deleted", messageId).run();
+      }
     } else if (action === "mute" || action === "ban") {
       if (!targetUserId) return error("missing_user", "缺少目标用户", 400);
       const durationMinutes = Math.max(1, Math.min(43_200, Math.round(Number(payload.durationMinutes) || (action === "mute" ? 10 : 1_440))));
@@ -137,8 +206,11 @@ export async function POST(request: Request) {
           reason = excluded.reason, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
         .bind(targetUserId, mutedUntil, bannedUntil, reason, auth.user.id, now).run();
       if (action === "ban") await d1.prepare("DELETE FROM user_sessions WHERE user_id = ?").bind(targetUserId).run();
-      if (payload.reportId) await d1.prepare("UPDATE chat_reports SET status = 'resolved', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE id = ?")
-        .bind(auth.user.id, now, action, payload.reportId).run();
+      if (payload.reportId) {
+        const table = reportSource === "community" ? "discussion_reports" : "chat_reports";
+        await d1.prepare(`UPDATE ${table} SET status = 'resolved', reviewed_by = ?, reviewed_at = ?, resolution = ? WHERE id = ?`)
+          .bind(auth.user.id, now, action, payload.reportId).run();
+      }
     } else {
       if (!targetUserId) return error("missing_user", "缺少目标用户", 400);
       const column = action === "unmute" ? "muted_until" : "banned_until";
@@ -160,7 +232,7 @@ export async function POST(request: Request) {
       after: { reportId: payload.reportId ?? null, durationMs },
     });
     await notifyPlatform({ type: "moderation_updated" });
-    if (action === "delete_message") await notifyPlatform({ type: "chat_updated" });
+    if (action === "delete_message") await notifyPlatform({ type: reportSource === "community" ? "community_updated" : "chat_updated" });
     if (action === "ban" && targetUserId) await notifyPlatform({ type: "account_restricted", userIds: [targetUserId] });
     if (targetUserId) await notifyPlatform({ type: "friends_updated", userIds: [targetUserId] });
     return Response.json({ ok: true });

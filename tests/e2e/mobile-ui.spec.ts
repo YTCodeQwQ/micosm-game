@@ -26,9 +26,10 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
   await expect(page).toHaveScreenshot("home.png", { fullPage: true });
 
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /大厅/ }).click();
-  await expect(page.locator(".mobile-world-header").getByRole("heading", { name: "主大厅" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "星海交流站" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /实时大厅/ })).toBeVisible();
   await expectNoHorizontalOverflow(page);
-  await expect(page).toHaveScreenshot("world-lobby.png", { fullPage: true });
+  await expect(page).toHaveScreenshot("community.png", { fullPage: true });
 
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /好友/ }).click();
   await expect(page.locator(".friend-panel > header").getByRole("heading", { name: "好友" })).toBeVisible();

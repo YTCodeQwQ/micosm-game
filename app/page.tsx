@@ -70,6 +70,7 @@ import { createMicosmGameFile, gameRecordFilename, MAX_GAME_FILE_BYTES, MICOSM_G
 import { RANK_NAMES, rankLabel } from "../lib/rank";
 import { STORY_SEASON_ONE, STORY_SEASON_TITLE } from "../lib/story-season-one";
 import { ModerationPanel } from "../components/ModerationPanel";
+import { CommunityCenter } from "../components/CommunityCenter";
 import { usePlatformRealtime } from "../hooks/usePlatformRealtime";
 import { useMobileApp } from "../hooks/useMobileApp";
 
@@ -117,6 +118,7 @@ type ConnectionState = "idle" | "online" | "reconnecting";
 type ToastTone = "info" | "success" | "warning";
 type PlayerProfile = { avatarUrl: string | null; signature: string };
 type AuthUser = PlayerProfile & { id: string; publicId: string; phone: string; displayName: string; avatarKey: string | null; hasPassword: boolean; role: "player" | "super_admin" | "admin" | "moderator" | "support" | "operator" };
+type HomeAnnouncement = { id: string; title: string; summary: string; category: string; priority: "normal" | "important" | "critical"; publishedAt: number };
 type GamePreferences = {
   appearance: "light" | "dark";
   soundEnabled: boolean;
@@ -629,7 +631,9 @@ function reviewMoveCoordinate(game: MatchGame, size: number, row: number, col: n
 }
 
 export default function HomePage() {
-  const [mainView, setMainView] = useState<"games" | "ranked" | "story" | "history">("games");
+  const [mainView, setMainView] = useState<"games" | "community" | "ranked" | "story" | "history">("games");
+  const [communityEntry, setCommunityEntry] = useState<"discussion" | "announcements">("discussion");
+  const [latestAnnouncement, setLatestAnnouncement] = useState<HomeAnnouncement | null>(null);
   const [activeGame, setActiveGame] = useState<GameId>("go");
   const [rankedGame, setRankedGame] = useState<RankGame>("go");
   const [rankData, setRankData] = useState<RankData | null>(null);
@@ -747,8 +751,18 @@ export default function HomePage() {
   const [reversiBoard, setReversiBoard] = useState(makeReversiBoard);
 
   const currentRoomId = room?.id;
-  const { friendsRevision, chatRevision, lobbyRevision } = usePlatformRealtime(authUser ? { id: authUser.id, role: authUser.role } : null);
+  const { friendsRevision, chatRevision, communityRevision, lobbyRevision } = usePlatformRealtime(authUser ? { id: authUser.id, role: authUser.role } : null);
   const { dismissInstallGuide, installGuide, installMobileApp, isFullscreen, isStandalone, toggleBrowserFullscreen } = useMobileApp(showToast);
+
+  useEffect(() => {
+    if (!authUser) return;
+    const controller = new AbortController();
+    void fetch("/api/community?view=announcements", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ announcements?: HomeAnnouncement[] }> : null)
+      .then((data) => setLatestAnnouncement(data?.announcements?.[0] ?? null))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [authUser, communityRevision]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1496,6 +1510,32 @@ export default function HomePage() {
     if (room) return showToast("请先退出当前房间再进入排位");
     setMainView("ranked");
     setLibraryMenuOpen(false);
+  }
+
+  function openCommunity(section: "discussion" | "announcements" = "discussion") {
+    if (room) return showToast("请先结束或退出当前对局");
+    setCommunityEntry(section);
+    setMainView("community");
+    setChatOpen(false);
+    setFriendPanelOpen(false);
+    setNotificationOpen(false);
+    setAccountOpen(false);
+    setLibraryMenuOpen(false);
+  }
+
+  function openCommunityGame(file: MicosmGameFile) {
+    try {
+      const parsed = parseMicosmGameFile(file);
+      const record = historyRecordFromGameFile(parsed);
+      const frames = buildReviewFrames(record.state);
+      setHistoryPlaying(false);
+      setHistoryReview({ record, frames, index: frames.length - 1, source: "import", file: parsed });
+      setMainView("history");
+      setChatOpen(false);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "无法打开帖子中的棋谱", "warning");
+    }
   }
 
   function openStoryMode() {
@@ -2564,6 +2604,7 @@ export default function HomePage() {
         </div>
         <nav className="main-nav" aria-label="主导航">
           <button className={mainView === "games" ? "active" : ""} onClick={() => setMainView("games")} type="button"><Play size={17} fill={mainView === "games" ? "currentColor" : "none"} />游戏</button>
+          <button className={mainView === "community" ? "active" : ""} onClick={() => openCommunity("discussion")} type="button"><MessageCircle size={17} />社区</button>
           <button className={mainView === "ranked" ? "active" : ""} onClick={openRankedLobby} type="button"><Trophy size={17} />排位</button>
           {STORY_MODE_ENABLED && <button className={mainView === "story" ? "active" : ""} onClick={openStoryMode} type="button"><BookOpen size={17} />剧情</button>}
         </nav>
@@ -2588,7 +2629,7 @@ export default function HomePage() {
 
       <nav className={`mobile-primary-nav ${mainView === "history" ? "history-hidden" : ""}`} aria-label="手机主导航">
         <button className={mainView === "games" && !chatOpen && !friendPanelOpen && !accountOpen ? "active" : ""} onClick={() => { setMainView("games"); setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(false); }} type="button"><Play size={20} fill="currentColor" /><span>游戏</span></button>
-        <button className={chatOpen && chatChannel === "world" ? "active" : ""} onClick={() => { setMainView("games"); setFriendPanelOpen(false); setAccountOpen(false); openChat("world"); }} type="button"><Globe2 size={20} /><span>大厅</span>{chatOverview.worldUnread > 0 && <b>{Math.min(chatOverview.worldUnread, 9)}</b>}</button>
+        <button className={mainView === "community" || (chatOpen && chatChannel === "world") ? "active" : ""} onClick={() => openCommunity("discussion")} type="button"><Globe2 size={20} /><span>大厅</span>{chatOverview.worldUnread > 0 && <b>{Math.min(chatOverview.worldUnread, 9)}</b>}</button>
         <button className={friendPanelOpen || (chatOpen && chatChannel === "direct") ? "active" : ""} onClick={() => { setChatOpen(false); setAccountOpen(false); setFriendPanelOpen(true); }} type="button"><Users size={20} /><span>好友</span>{friendBadge > 0 && <b>{Math.min(friendBadge, 9)}</b>}</button>
         <button className={accountOpen ? "active" : ""} onClick={() => { setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(true); }} type="button"><UserRound size={20} /><span>我的</span></button>
       </nav>
@@ -2981,6 +3022,7 @@ export default function HomePage() {
           <div className="desktop-home-shell">
             <ClubLobby
               activeGame={activeGame}
+              announcement={latestAnnouncement}
               authUser={authUser}
               busy={roomBusy}
               colorPreference={colorPreference}
@@ -3003,6 +3045,7 @@ export default function HomePage() {
               onJoin={() => void joinRoom()}
               onJoinCodeChange={setJoinCode}
               onAI={openAiSetup}
+              onAnnouncement={() => openCommunity("announcements")}
               onMatch={() => void startMatchmaking()}
               onRanked={openRankedLobby}
               onScan={openRoomScanner}
@@ -3011,6 +3054,7 @@ export default function HomePage() {
           </div>
           <MobileGameHome
             activeGame={activeGame}
+            announcement={latestAnnouncement}
             authUser={authUser}
             busy={roomBusy}
             colorPreference={colorPreference}
@@ -3033,6 +3077,7 @@ export default function HomePage() {
             onJoin={() => void joinRoom()}
             onJoinCodeChange={setJoinCode}
             onAI={openAiSetup}
+            onAnnouncement={() => openCommunity("announcements")}
             onMatch={() => void startMatchmaking()}
             onRanked={openRankedLobby}
             onScan={openRoomScanner}
@@ -3040,6 +3085,16 @@ export default function HomePage() {
             onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
           />
         </>
+      ) : mainView === "community" && authUser ? (
+        <CommunityCenter
+          initialSection={communityEntry}
+          key={communityEntry}
+          onOpenGame={openCommunityGame}
+          onOpenLiveLobby={() => { setMainView("games"); openChat("world"); }}
+          onToast={showToast}
+          revision={communityRevision}
+          user={{ id: authUser.id, publicId: authUser.publicId, displayName: authUser.displayName, signature: authUser.signature, avatarUrl: authUser.avatarUrl }}
+        />
       ) : mainView === "history" ? (
         <HistoryCenter
           busy={historyBusy}
@@ -3358,6 +3413,7 @@ function ResponsiveArtwork({ alt, desktop, mobile }: { alt: string; desktop: str
 
 type ClubLobbyProps = {
   activeGame: GameId;
+  announcement: HomeAnnouncement | null;
   authUser: AuthUser | null;
   busy: boolean;
   colorPreference: ColorPreference;
@@ -3380,6 +3436,7 @@ type ClubLobbyProps = {
   onJoin: () => void;
   onJoinCodeChange: (code: string) => void;
   onAI: () => void;
+  onAnnouncement: () => void;
   onMatch: () => void;
   onRanked: () => void;
   onScan: () => void;
@@ -3387,7 +3444,7 @@ type ClubLobbyProps = {
   onlineFriends: number;
 };
 
-function MobileGameHome({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onStory, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+function MobileGameHome({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onStory, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
@@ -3407,6 +3464,12 @@ function MobileGameHome({ activeGame, authUser, busy, colorPreference, completed
         </div>
         <div className="mobile-home-profile"><UserAvatar name={authUser?.displayName ?? "M"} src={authUser?.avatarUrl} /></div>
       </section>
+
+      {announcement && <button className={`mobile-home-announcement ${announcement.priority}`} onClick={onAnnouncement} type="button">
+        <span><Bell size={17} /></span>
+        <div><small>最新公告</small><strong>{announcement.title}</strong><p>{announcement.summary || "查看 Micosm Game 最新消息"}</p></div>
+        <ChevronRight size={18} />
+      </button>}
 
       <section className="mobile-game-pick" aria-labelledby="mobile-play-title">
         <header><div><small>CHOOSE A BOARD</small><h2 id="mobile-play-title">今天下什么？</h2></div><span>{favoriteCount} 个收藏</span></header>
@@ -3457,7 +3520,7 @@ function MobileGameHome({ activeGame, authUser, busy, colorPreference, completed
   );
 }
 
-function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
@@ -3482,6 +3545,7 @@ function ClubLobby({ activeGame, authUser, busy, colorPreference, completed, fav
 
       <aside className="glass lobby-console" aria-label="开始对局">
         <header><div><span>PLAY</span><h2>今天下什么？</h2></div><span className="lobby-online"><i />{onlineFriends} 位好友在线</span></header>
+        {announcement && <button className={`lobby-announcement ${announcement.priority}`} onClick={onAnnouncement} type="button"><span><Bell size={16} /></span><div><small>最新公告</small><strong>{announcement.title}</strong></div><ChevronRight size={17} /></button>}
         <div className="lobby-player">
           <UserAvatar name={authUser?.displayName ?? "M"} src={authUser?.avatarUrl} />
           <div><strong>{authUser?.displayName ?? "新棋手"}</strong><p>{authUser?.signature || "在棋盘上留下属于你的星轨"}</p></div>
