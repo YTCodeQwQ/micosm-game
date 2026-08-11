@@ -198,10 +198,18 @@ test("desktop community keeps the feed focused and readable", async ({ page }, t
   await mockSignedInApi(page);
   await mockCommunity(page);
   await page.goto("/");
+  await page.setViewportSize({ width: 2048, height: 1088 });
   await page.locator(".main-nav").getByRole("button", { name: "社区" }).click();
   await expect(page.getByRole("heading", { name: "星海交流站" })).toBeVisible();
   await expect(page.getByRole("heading", { name: post.title })).toBeVisible();
   await expectNoHorizontalOverflow(page);
+  const communityBox = await page.locator(".community-center").boundingBox();
+  const discussionBox = await page.locator(".community-layout").boundingBox();
+  expect(communityBox).not.toBeNull();
+  expect(discussionBox).not.toBeNull();
+  expect(communityBox!.x).toBeLessThanOrEqual(24);
+  expect(2048 - (communityBox!.x + communityBox!.width)).toBeLessThanOrEqual(24);
+  expect(discussionBox!.height).toBeGreaterThanOrEqual(650);
   await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-main-desktop.png") });
   await page.locator(".community-primary-tabs").getByRole("button", { name: /实时大厅/ }).click();
   await expect(page.getByRole("heading", { name: "星海交流站" })).toBeVisible();
@@ -210,7 +218,6 @@ test("desktop community keeps the feed focused and readable", async ({ page }, t
   await expect(page.locator(".chat-panel")).toHaveCount(0);
   await expect(page.getByText("晚上好，五子棋大厅有人来一局吗？")).toBeVisible();
   await expect(page.locator(".community-live-room-list").getByText("星野棋手")).toBeVisible();
-  await page.setViewportSize({ width: 2048, height: 1088 });
   await expectNoHorizontalOverflow(page);
   const liveLobbyBox = await page.locator(".community-live-lobby").boundingBox();
   expect(liveLobbyBox).not.toBeNull();

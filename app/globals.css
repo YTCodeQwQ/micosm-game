@@ -3102,10 +3102,48 @@ body[data-theme="dark"] {
 }
 
 @media (min-width: 1321px) {
-  .community-live-page-active > .topbar,
-  .community-live-page-active .community-center {
+  .community-view-active > .topbar,
+  .community-view-active .community-center {
     width: min(100%,2200px);
     max-width: 2200px;
+  }
+  .community-view-active .community-layout,
+  .community-view-active .community-detail-layout,
+  .community-view-active .community-announcement-page {
+    min-height: clamp(650px,calc(100dvh - 360px),900px);
+    padding: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(79,121,139,.13);
+    border-radius: 18px;
+    background: rgba(247,251,253,.82);
+    box-shadow: 0 18px 48px rgba(44,72,90,.09), inset 0 1px 0 #fff;
+  }
+  .community-view-active .community-layout,
+  .community-view-active .community-detail-layout {
+    grid-template-columns: minmax(0,1fr) minmax(350px,400px);
+    align-items: stretch;
+    gap: 18px;
+  }
+  .community-view-active .community-feed,
+  .community-view-active .community-post-detail { align-self: start; }
+  .community-view-active .community-sidebar,
+  .community-view-active .community-detail-side {
+    align-content: start;
+    padding-left: 18px;
+    border-left: 1px solid rgba(72,108,124,.11);
+  }
+  .community-view-active .community-post-open > h2,
+  .community-view-active .community-post-open > p { max-width: 1080px; }
+  .community-view-active .community-announcement-page {
+    grid-template-columns: minmax(320px,420px) minmax(0,1fr);
+    align-items: stretch;
+    gap: 18px;
+  }
+  .community-view-active .community-announcement-page > header {
+    position: relative;
+    top: auto;
+    height: 100%;
+    min-height: 100%;
   }
   .lobby-home-active > .topbar,
   .lobby-home-active .club-lobby-shell { width: 100%; }
