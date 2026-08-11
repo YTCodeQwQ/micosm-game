@@ -31,9 +31,11 @@ contract during deployment.
    behind an authenticated HTTPS reverse proxy or private network.
 7. Registration still uses the temporary invite code `abcd123`. SMS verification
    is not implemented and must be replaced before a public production launch.
-8. The full administrator console and operations dashboard are designs, not
-   current features. See `ADMIN_CONSOLE_DESIGN.md` and
-   `PRODUCTION_OPERATIONS_DESIGN.md` before claiming they are available.
+8. `/admin` Phase 1 is implemented with persistent roles, overview metrics,
+   user lookup/session revocation, report moderation, AI health and append-only
+   audit views. Match inspection, ranking operations, announcements and the
+   operations dashboard remain planned. See `ADMIN_CONSOLE_DESIGN.md` and
+   `PRODUCTION_OPERATIONS_DESIGN.md` for the exact boundary.
 
 ## 2. Runtime architecture
 
@@ -64,6 +66,8 @@ tiers need native services.
 | `app/` | UI and HTTP API routes |
 | `app/api/match/route.ts` | rooms, matchmaking, ranked play and AI orchestration |
 | `app/api/history/route.ts` | authenticated match archive listing and replay loading |
+| `app/admin/` | dedicated administrator workspace |
+| `app/api/admin/` | role-protected administrator APIs |
 | `lib/match-engine.ts` | authoritative board rules and replayable state |
 | `lib/match-history.ts` | idempotent terminal-state archival in `match_records` |
 | `worker/index.ts` | Worker entry point and WebSocket routing |
@@ -84,6 +88,7 @@ tiers need native services.
 npm.cmd install
 npm.cmd test
 npm.cmd run lint
+npm.cmd run ai:gomoku:benchmark
 ```
 
 The lint command should complete with zero errors and zero warnings.
@@ -180,8 +185,8 @@ platform's encrypted secret/variable system.
 | `AI_KATAGO_SECONDS` | optional | Maximum seconds per Go move | `12` |
 | `RAPFI_SERVICE_ORIGIN` | for Gomoku master | Reachable Rapfi HTTPS origin | `http://127.0.0.1:3211` |
 | `RAPFI_SERVICE_TOKEN` | production | Rapfi bearer token | falls back to `AI_SERVICE_TOKEN` |
-| `AI_RAPFI_SECONDS` | optional | Maximum seconds per Gomoku move, 1-30 | `5` |
-| `MICO_ADMIN_PUBLIC_IDS` | production | Comma-separated moderator `MG-...` IDs | empty |
+| `AI_RAPFI_SECONDS` | optional | Maximum seconds per Gomoku move, 0.5-30 | `2.5` |
+| `MICO_ADMIN_PUBLIC_IDS` | production | Emergency bootstrap `MG-...` IDs promoted to `super_admin` | empty |
 | `HEALTH_CHECK_AI` | optional | Include both native engines in every health probe | `false` |
 | `VITE_LAN_ORIGIN` | local/LAN only | Build-time room QR origin override | current page origin |
 
@@ -207,6 +212,9 @@ platform's encrypted secret/variable system.
 | `RAPFI_SERVICE_PORT` | bind port | `3211` |
 | `RAPFI_SERVICE_TOKEN` | accepted bearer token | falls back to `AI_SERVICE_TOKEN` |
 | `RAPFI_MAX_QUEUE` | maximum waiting move requests | `8` |
+| `RAPFI_WORKERS` | prewarmed engine process count | `2` |
+| `RAPFI_THREADS` | search threads per worker | host-bounded, normally `4` |
+| `RAPFI_MEMORY_MB` | transposition memory per worker | `256` |
 
 Use the same token on each service and its matching Worker variable. Prefer
 different tokens for KataGo and Rapfi in production.
@@ -324,7 +332,8 @@ Use two separate browsers or a browser plus a phone.
 11. Send friend, direct-chat and world-chat messages plus a room invitation.
 12. Start Go master and confirm `KataGo` appears as the room AI engine.
 13. Start Gomoku master in freestyle and Renju modes and confirm `Rapfi` appears.
-    Also run the tactical and latency gates in `AI_GOMOKU_PLAN.md`; service
+    Run `npm run ai:gomoku:benchmark` against the live service and require all
+    immediate-win, immediate-block and legality cases to pass; service
     readiness alone does not prove acceptable strength.
 14. Open the match archive from the account menu, load a finished match and
     move through its replay timeline. Verify resignation/departure/timeout
@@ -370,7 +379,7 @@ loopback URL.
 
 ### AI keeps thinking
 
-KataGo uses a bounded per-move timeout and Rapfi defaults to five seconds. Check
+KataGo uses a bounded per-move timeout and Rapfi defaults to 2.5 seconds. Check
 the native-service terminal first. Restart only the failing AI service; the room
 state remains in D1. Do not replace a strong tier with the built-in AI silently.
 
@@ -401,11 +410,14 @@ Before calling a deployment public production:
    owner-selected `required`, `optional` or `off` invitation policy.
 2. Set bearer tokens for both native AI services.
 3. Require HTTPS and keep secure session cookies enabled.
-4. Configure `MICO_ADMIN_PUBLIC_IDS` with the production moderator player IDs.
+4. Configure `MICO_ADMIN_PUBLIC_IDS` with the owner's production player ID for
+   emergency `super_admin` bootstrap, sign in once, verify `/admin`, then manage
+   ordinary administrator roles through the audited console.
 5. Store D1 exports and R2 backups outside the application server and perform a restore drill.
 6. Add service supervision, structured logs and uptime alerts.
-7. Run the Gomoku tactical/latency release gate after correcting the Rapfi
-   integration described in `AI_GOMOKU_PLAN.md`.
+7. Run `npm run ai:gomoku:benchmark` and preserve its JSON result in the release
+   evidence. The corrected Rapfi integration is described in
+   `AI_GOMOKU_PLAN.md`.
 8. Review Rapfi GPLv3 distribution compliance.
 
 ## 15. Agent completion report

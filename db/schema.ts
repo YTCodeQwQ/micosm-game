@@ -169,6 +169,33 @@ export const moderationActions = sqliteTable("moderation_actions", {
   createdAt: integer("created_at").notNull(),
 }, (table) => [index("moderation_actions_created_idx").on(table.createdAt)]);
 
+export const adminRoles = sqliteTable("admin_roles", {
+  userId: text("user_id").primaryKey(),
+  role: text("role").notNull(),
+  assignedBy: text("assigned_by"),
+  reason: text("reason").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [index("admin_roles_role_idx").on(table.role, table.updatedAt)]);
+
+export const adminAuditLog = sqliteTable("admin_audit_log", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id").notNull(),
+  adminUserId: text("admin_user_id").notNull(),
+  adminRole: text("admin_role").notNull(),
+  module: text("module").notNull(),
+  action: text("action").notNull(),
+  targetType: text("target_type"),
+  targetId: text("target_id"),
+  reason: text("reason").notNull().default(""),
+  beforeJson: text("before_json"),
+  afterJson: text("after_json"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  index("admin_audit_created_idx").on(table.createdAt),
+  index("admin_audit_target_idx").on(table.targetType, table.targetId, table.createdAt),
+]);
+
 export const appSchemaMigrations = sqliteTable("app_schema_migrations", {
   version: integer("version").primaryKey(),
   name: text("name").notNull(),

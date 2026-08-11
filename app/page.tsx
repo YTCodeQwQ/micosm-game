@@ -112,7 +112,7 @@ type ConfirmIntent = "leave" | "reset" | "resign" | null;
 type ConnectionState = "idle" | "online" | "reconnecting";
 type ToastTone = "info" | "success" | "warning";
 type PlayerProfile = { avatarUrl: string | null; signature: string };
-type AuthUser = PlayerProfile & { id: string; publicId: string; phone: string; displayName: string; avatarKey: string | null; hasPassword: boolean; role: "player" | "admin" };
+type AuthUser = PlayerProfile & { id: string; publicId: string; phone: string; displayName: string; avatarKey: string | null; hasPassword: boolean; role: "player" | "super_admin" | "admin" | "moderator" | "support" | "operator" };
 type GamePreferences = {
   appearance: "light" | "dark";
   soundEnabled: boolean;
@@ -2443,7 +2443,7 @@ export default function HomePage() {
           <button onClick={openProfileEditor} type="button"><Pencil size={16} />编辑个人资料</button>
           <button onClick={openHistoryView} type="button"><Clock3 size={16} />对局记录</button>
           <button onClick={openSettings} type="button"><Settings2 size={16} />游戏设置</button>
-          {authUser.role === "admin" && <button onClick={() => { setModerationOpen(true); setAccountOpen(false); }} type="button"><ShieldAlert size={16} />频道管理</button>}
+          {authUser.role !== "player" && <button onClick={() => { window.location.assign("/admin"); setAccountOpen(false); }} type="button"><ShieldAlert size={16} />管理后台</button>}
           <button className="mobile-app-action" onClick={() => void toggleBrowserFullscreen()} type="button">{isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{isFullscreen ? "退出浏览器全屏" : "进入浏览器全屏"}</button>
           <button className="mobile-app-action" disabled={isStandalone} onClick={() => void installMobileApp()} type="button">{isStandalone ? <Check size={16} /> : <Download size={16} />}{isStandalone ? "已从手机桌面启动" : "添加到手机桌面"}</button>
           {installGuide && <div className="mobile-install-guide" role="status"><Smartphone size={18} /><p>{installGuide}</p><button aria-label="关闭添加说明" onClick={dismissInstallGuide} type="button"><X size={15} /></button></div>}

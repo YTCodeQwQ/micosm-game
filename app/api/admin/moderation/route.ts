@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { getD1 } from "../../../../db";
+import { configuredAdminIds, requireAdminPermission, writeAdminAudit } from "../../../../lib/admin";
 import { avatarUrlForKey } from "../../../../lib/auth";
-import { configuredAdminIds, requireAdmin } from "../../../../lib/moderation";
+import { ensureAppSchema } from "../../../../lib/database-migrations";
 import { notifyPlatform } from "../../../../lib/platform-realtime";
 
 type ReportRow = {
@@ -30,7 +31,8 @@ function error(code: string, message: string, status: number) {
 export async function GET(request: Request) {
   try {
     const d1 = getD1();
-    const auth = await requireAdmin(request, d1, adminIds());
+    await ensureAppSchema(d1);
+    const auth = await requireAdminPermission(request, d1, adminIds(), "reports.read");
     if (auth.response) return auth.response;
     const reports = await d1.prepare(`SELECT r.id, r.message_id, r.reason, r.created_at, r.status, r.resolution,
         m.body, m.deleted_at, m.sender_id, sender.display_name AS sender_name, sender.avatar_key AS sender_avatar,
@@ -82,7 +84,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const d1 = getD1();
-    const auth = await requireAdmin(request, d1, adminIds());
+    await ensureAppSchema(d1);
+    const auth = await requireAdminPermission(request, d1, adminIds(), "reports.write");
     if (auth.response || !auth.user) return auth.response ?? error("auth_required", "请先登录", 401);
     const payload = await request.json() as {
       action?: "dismiss" | "delete_message" | "mute" | "ban" | "unmute" | "unban";
@@ -98,6 +101,7 @@ export async function POST(request: Request) {
     }
     const now = Date.now();
     const reason = typeof payload.reason === "string" ? payload.reason.trim().slice(0, 120) : "";
+    if (!reason) return error("reason_required", "请输入操作理由", 400);
     let targetUserId = payload.targetUserId?.trim() || null;
     let messageId = payload.messageId?.trim() || null;
     if (payload.reportId) {
@@ -144,6 +148,17 @@ export async function POST(request: Request) {
 
     await d1.prepare(`INSERT INTO moderation_actions (id, admin_user_id, target_user_id, message_id, action, reason, duration_ms, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(crypto.randomUUID(), auth.user.id, targetUserId, messageId, action, reason, durationMs, now).run();
+    await writeAdminAudit(d1, {
+      requestId: request.headers.get("x-request-id") ?? undefined,
+      adminUserId: auth.user.id,
+      adminRole: auth.role,
+      module: "moderation",
+      action,
+      targetType: targetUserId ? "user" : messageId ? "message" : "report",
+      targetId: targetUserId ?? messageId ?? payload.reportId ?? null,
+      reason,
+      after: { reportId: payload.reportId ?? null, durationMs },
+    });
     await notifyPlatform({ type: "moderation_updated" });
     if (action === "delete_message") await notifyPlatform({ type: "chat_updated" });
     if (action === "ban" && targetUserId) await notifyPlatform({ type: "account_restricted", userIds: [targetUserId] });

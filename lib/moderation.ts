@@ -1,4 +1,4 @@
-import { ensureAuthSchema, getSessionUser, type AuthUser } from "./auth";
+import { configuredAdminIds, requireAdminPermission } from "./admin";
 
 type ModerationStatement = {
   bind(...values: unknown[]): ModerationStatement;
@@ -46,24 +46,11 @@ export async function ensureModerationSchema(d1: ModerationD1) {
   }
 }
 
-export function configuredAdminIds(value?: string) {
-  return new Set((value ?? "").split(",").map((item) => item.trim().toUpperCase()).filter(Boolean));
-}
-
-export async function resolveConfiguredAdmin(d1: ModerationD1, user: AuthUser, configuredIds: Set<string>) {
-  if (user.role === "admin" || !configuredIds.has(user.publicId.toUpperCase())) return user;
-  await d1.prepare("UPDATE users SET role = 'admin', updated_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
-  return { ...user, role: "admin" as const };
-}
+export { configuredAdminIds };
 
 export async function requireAdmin(request: Request, d1: ModerationD1, configuredIds: Set<string>) {
-  await ensureAuthSchema(d1);
   await ensureModerationSchema(d1);
-  const sessionUser = await getSessionUser(request, d1);
-  if (!sessionUser) return { user: null, response: Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 }) };
-  const user = await resolveConfiguredAdmin(d1, sessionUser, configuredIds);
-  if (user.role !== "admin") return { user: null, response: Response.json({ error: { code: "admin_required", message: "需要管理员权限" } }, { status: 403 }) };
-  return { user, response: null };
+  return requireAdminPermission(request, d1, configuredIds, "reports.write");
 }
 
 export async function activeSanction(d1: ModerationD1, userId: string) {

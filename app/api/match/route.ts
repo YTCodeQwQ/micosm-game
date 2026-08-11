@@ -100,7 +100,7 @@ async function ensureKataGoReady() {
 
 function rapfiSeconds() {
   const configured = Number((env as unknown as { AI_RAPFI_SECONDS?: string }).AI_RAPFI_SECONDS);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(30, configured)) : 5;
+  return Number.isFinite(configured) ? Math.max(0.5, Math.min(30, configured)) : 2.5;
 }
 
 async function rapfiAction(state: MatchState): Promise<MatchAction> {

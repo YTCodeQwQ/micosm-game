@@ -28,9 +28,11 @@ Read these documents in order:
    operator console and alerting workflow; planned items are not yet implemented.
 7. [`MOBILE_QA.md`](MOBILE_QA.md): required real-device release matrix.
 
-The admin-console product design is in
-[`ADMIN_CONSOLE_DESIGN.md`](ADMIN_CONSOLE_DESIGN.md). The current product only
-contains the smaller channel-moderation panel.
+The admin-console product design and implementation boundary are in
+[`ADMIN_CONSOLE_DESIGN.md`](ADMIN_CONSOLE_DESIGN.md). `/admin` Phase 1 is
+implemented: persistent roles, overview, user/session tools, report moderation,
+AI health and audit history. Match/ranking operations, announcements and the
+operations dashboard are still planned.
 
 ## Required Inputs From The Owner
 
@@ -39,7 +41,7 @@ The deployment agent must obtain these without committing them to Git:
 - Cloudflare/Sites project access and the final domain.
 - Production D1 and R2 resource names.
 - Production Durable Object bindings.
-- One or more moderator `MG-...` player IDs.
+- The owner's `MG-...` player ID for emergency `super_admin` bootstrap.
 - Separate bearer tokens for KataGo and Rapfi.
 - Public HTTPS origins for the two AI nodes.
 - SMS provider credentials and approved template details when SMS is enabled.
@@ -88,7 +90,8 @@ and engine versions, CPU instruction support, service token, queue limit and
 health response. Do not silently fall back from the highest AI tier to the
 built-in AI.
 
-Gomoku AI currently needs the integration changes and benchmark described in
+Gomoku AI uses a prewarmed Rapfi worker pool and corrected Piskvork clocks.
+Run `npm run ai:gomoku:benchmark` and archive the result as described in
 `AI_GOMOKU_PLAN.md`. A deployment agent must not claim the highest tier is ready
 only because `/health` returns 200.
 

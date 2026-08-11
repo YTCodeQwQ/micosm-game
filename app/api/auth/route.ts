@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import { getD1 } from "../../../db";
+import { configuredAdminIds, resolveConfiguredAdmin } from "../../../lib/admin";
 import { authUserFromRow, cleanDisplayName, clearSessionCookie, createPassword, createSession, deleteSession, getSessionUser, inviteCodeIsValid, maskedPhone, normalizePhone, normalizeUsernameKey, passwordIsValid, publicUserIdForInternalId, verifyPassword, type AuthUser, type AuthUserRow } from "../../../lib/auth";
 import { ensureAppSchema } from "../../../lib/database-migrations";
-import { activeSanction, configuredAdminIds, resolveConfiguredAdmin } from "../../../lib/moderation";
+import { activeSanction } from "../../../lib/moderation";
 import { clientAddress, consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 function publicUser(user: AuthUser) {

@@ -29,6 +29,10 @@ calls the KataGo and Rapfi nodes through configurable HTTP origins.
 | `RAPFI_SERVICE_HOST` | Bind address | `127.0.0.1` |
 | `RAPFI_SERVICE_PORT` | HTTP port | `3211` |
 | `RAPFI_SERVICE_TOKEN` | Optional bearer token | falls back to `AI_SERVICE_TOKEN` |
+| `RAPFI_WORKERS` | Prewarmed Rapfi process count | `2` |
+| `RAPFI_THREADS` | Search threads per process | host-bounded, normally `4` |
+| `RAPFI_MEMORY_MB` | Transposition memory per process | `256` |
+| `RAPFI_MAX_QUEUE` | Maximum waiting move requests | `8` |
 
 Paths may be absolute or relative to the project root. KataGo tuning data is
 created beside the executable and should be persisted across restarts. Rapfi's
@@ -44,7 +48,7 @@ created beside the executable and should be persisted across restarts. Rapfi's
 | `AI_KATAGO_SECONDS` | Maximum thinking time for one master-level move | `12` |
 | `RAPFI_SERVICE_ORIGIN` | Rapfi node origin | `http://127.0.0.1:3211` |
 | `RAPFI_SERVICE_TOKEN` | Same token used by the Rapfi node | falls back to `AI_SERVICE_TOKEN` |
-| `AI_RAPFI_SECONDS` | Maximum thinking time for one Rapfi move, 1-30 | `5` |
+| `AI_RAPFI_SECONDS` | Maximum thinking time for one Rapfi move, 0.5-30 | `2.5` |
 
 For a Cloudflare deployment, both service origins must be HTTPS addresses that
 the Worker can reach. For a single traditional server, the default loopback
@@ -62,10 +66,19 @@ addresses are sufficient when the web process and AI nodes run on the same host.
    `npm run ai:gomoku`. KataGo's first startup may spend several minutes tuning
    the target GPU.
 4. Confirm ports 3210 and 3211 both return `ready: true` from `GET /health`.
-5. Set the web variables, deploy the web application, and verify `/api/ai` and
+5. Run `npm run ai:gomoku:benchmark` against port 3211 and require every release
+   gate to pass. Preserve the JSON output with the release evidence.
+6. Set the web variables, deploy the web application, and verify `/api/ai` and
    `/api/ai?engine=rapfi`.
-6. Persist the KataGo tuning directory and supervise all three processes with
+7. Persist the KataGo tuning directory and supervise all three processes with
    the server's process manager.
+
+Rapfi workers are started and warmed before health reports ready. Each request
+resets an assigned worker, supplies the ordered move history, uses
+`timeout_turn` for the per-move budget, and uses the protocol's unlimited value
+for `time_left` because Micosm AI games do not have a whole-match engine clock.
+Health reports the engine/model hash, worker capacity, queue depth and p50/p95
+search latency so deployments can be compared without guessing from UI delay.
 
 Rapfi is GPLv3 software. A deployment or distributed package that includes the
 binary must preserve its license and provide the corresponding source or a

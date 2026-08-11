@@ -2,6 +2,8 @@
 
 Last reviewed: 2026-08-11
 
+Status: integration correction and first tactical release gate implemented.
+
 ## User Finding
 
 The current Gomoku AI feels weak and slow. It has missed obvious attacking
@@ -26,25 +28,28 @@ Official references:
 - <https://github.com/dhbloo/rapfi/releases/tag/250615>
 - <https://github.com/dhbloo/rapfi-Networks>
 
-## Likely Integration Problems
+## Implemented Baseline
 
-1. `scripts/rapfi-service.mjs` currently sends both `timeout_turn` and
-   `time_left` as the same per-move value. In the Piskvork protocol,
-   `time_left` means remaining time for the entire match. Telling Rapfi that the
-   whole match has only five seconds can make its time manager search too
-   conservatively.
-2. The checked-in development config uses one search thread.
-3. A new Rapfi process is spawned for every move. This adds startup/model-load
-   latency and discards search caches after every turn.
-4. The highest tier intentionally waits up to the configured search budget,
-   currently five seconds, but the UI does not distinguish useful search time
-   from process startup and queue delay.
-5. There is no reproducible tactical benchmark yet, so perceived strength
-   cannot be compared across changes.
+`scripts/rapfi-service.mjs` now owns a prewarmed worker pool instead of spawning
+an engine for every move. It sends `timeout_turn` as the per-move budget and the
+protocol's unlimited value for `time_left`, resets workers between requests,
+preserves ordered move history, validates every returned coordinate and exposes
+startup, queue and search timing separately.
+
+The default development capacity is two workers, four search threads and 256 MB
+of transposition memory per worker. All values are host-configurable and
+bounded. The default player-facing budget is 2.5 seconds.
+
+`npm run ai:gomoku:benchmark` provides six deterministic release-gate cases
+covering immediate wins and blocks for both colors in Freestyle and Renju. On
+the current development machine two verified runs passed 6/6 with zero queue
+time and 84-1476 ms search time. The result is hardware-specific and must
+be regenerated on the production host. The model-set hash reported by that run
+was `9188e45b3d1b8ca3`.
 
 ## Required Work Order
 
-### Phase A: Build A Baseline
+### Phase A: Build A Baseline (first gate implemented)
 
 Create a deterministic position suite covering both colors and both Freestyle
 and Renju:
@@ -63,7 +68,7 @@ For every position record legality, expected move set, selected move, engine
 version, model hash, CPU, threads, search time, queue time and total latency.
 The release gate is 100% on immediate wins, immediate blocks and legality.
 
-### Phase B: Fix The Integration
+### Phase B: Fix The Integration (implemented)
 
 1. Send a real match clock in `time_left`, or use the protocol's unlimited
    value when the match has no global AI clock. Keep `timeout_turn` as the
@@ -78,19 +83,21 @@ The release gate is 100% on immediate wins, immediate blocks and legality.
 Do not share one mutable engine process across simultaneous games without a
 proper queue and reset boundary.
 
-### Phase C: Tune Player-Facing Tiers
+### Phase C: Tune Player-Facing Tiers (initial tuning implemented)
 
 - Easy/normal/hard may continue using fast built-in logic with distinct play
   styles.
 - The highest tier uses Rapfi with a measured search budget.
-- Start with a 1.5-2.5 second highest-tier target on the production CPU, then
+- The current default is 2.5 seconds. Recheck the 1.5-2.5 second target on the
+  production CPU, then
   increase only if the benchmark shows a useful strength gain.
 - Show a short thinking state immediately; do not leave the board looking
   frozen.
 
 ### Phase D: Consider Another Model Or Engine
 
-Only compare another engine/model after the corrected Rapfi baseline exists.
+The corrected Rapfi baseline now exists. Only compare another engine/model when
+the tactical suite has been expanded beyond the six immediate-threat gates.
 A candidate must beat the baseline tactical score or equivalent match score at
 the same p95 latency and hardware cost. It must also provide:
 

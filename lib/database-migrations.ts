@@ -1,4 +1,5 @@
 import { ensureAuthSchema } from "./auth";
+import { ensureAdminSchema } from "./admin";
 import { ensureChatSchema } from "./chat";
 import { ensureFriendSchema } from "./friends";
 import { ensureMatchDiagnosticsSchema } from "./match-diagnostics";
@@ -101,6 +102,9 @@ async function migrate(d1: AppD1) {
   await ensureRateLimitSchema(d1);
   await ensureModerationSchema(d1);
   await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (2, 'security_and_moderation', ?)").bind(Date.now()).run();
+
+  await ensureAdminSchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (3, 'admin_console_foundation', ?)").bind(Date.now()).run();
 
   await d1.prepare("PRAGMA optimize").run();
 }

@@ -1,18 +1,21 @@
 # Administrator Console Design
 
-Status: design only; implementation requires owner approval.
+Status: Phase 1 foundation plus the report/user portions of Phase 2 are
+implemented. Separate short-lived admin sessions remain pending.
 
 Last reviewed: 2026-08-11
 
 ## Current State
 
-The application already has a small authenticated channel-moderation panel. It
-can review chat reports, delete messages, mute users, ban users and reverse
-active sanctions. It is not a complete administrator backend.
+The application has a dedicated `/admin` workspace with server-enforced roles.
+It includes an overview, user search, session revocation, role assignment,
+report moderation, active sanctions, KataGo/Rapfi health and append-only audit
+history. Desktop is the primary operating surface; mobile supports urgent
+review and account restriction, not dense analytics.
 
-The full console should be a dedicated `/admin` workspace. It must not be a
-larger modal inside the player UI. Desktop is the primary operating surface;
-mobile supports urgent review and account restriction, not dense analytics.
+Match/room inspection, ranking operations, AI availability controls,
+announcements, policies and the operations dashboard remain planned. The
+browser console intentionally does not expose database restore or secret edits.
 
 ## Roles
 
@@ -121,13 +124,13 @@ manages versioning and publication.
 - Admin sessions use shorter lifetimes and can be revoked independently.
 - Every mutation has an idempotency key and an append-only audit record.
 
-## Proposed API Areas
+## API Areas
 
 ```text
 /api/admin/overview
 /api/admin/users
 /api/admin/users/:id/actions
-/api/admin/reports
+/api/admin/moderation
 /api/admin/matches
 /api/admin/ranking
 /api/admin/ai
@@ -153,15 +156,16 @@ All additions use versioned, additive D1 migrations.
 
 ## Delivery Phases
 
-### Phase 1: Foundation
+### Phase 1: Foundation (mostly implemented)
 
-Dedicated layout, role/permission middleware, short admin sessions, navigation,
-audit writer and overview shell.
+Implemented: dedicated layout, role/permission middleware, navigation, audit
+writer and overview shell. Remaining: a separate short-lived admin session and
+recent-password re-authentication flow for the highest-risk mutations.
 
-### Phase 2: Safety And Support
+### Phase 2: Safety And Support (partially implemented)
 
-Move the current moderation tools into the console. Add user search, session
-revocation, warnings, internal notes and match/replay lookup.
+Implemented: moderation tools, user search, session revocation and role
+assignment. Remaining: warnings, internal notes and match/replay lookup.
 
 ### Phase 3: Game Operations
 
@@ -178,8 +182,9 @@ account export/deletion workflows.
 Add the read-only release, backup, incident and alert views described in
 `PRODUCTION_OPERATIONS_DESIGN.md`.
 
-## First Development Proposal
+## Next Development Slice
 
-After owner approval, implement Phase 1 and the report/user portions of Phase 2
-first. This gives the project a secure administrative foundation without mixing
-deployment controls into the player application or touching match rules.
+Complete read-only match/replay inspection first, then ranking diagnostics and
+audited correction workflows. Add AI availability controls only after their
+runtime state has durable storage and a safe drain path; a browser toggle must
+not terminate an in-flight engine request.

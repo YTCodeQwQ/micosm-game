@@ -12,8 +12,15 @@ export type AuthUser = {
   avatarKey: string | null;
   avatarUrl: string | null;
   hasPassword: boolean;
-  role: "player" | "admin";
+  role: UserRole;
 };
+
+export type AdminRole = "super_admin" | "admin" | "moderator" | "support" | "operator";
+export type UserRole = "player" | AdminRole;
+
+export function isAdminRole(role: string): role is AdminRole {
+  return ["super_admin", "admin", "moderator", "support", "operator"].includes(role);
+}
 
 export type AuthUserRow = {
   id: string;
@@ -93,7 +100,7 @@ export function authUserFromRow(row: AuthUserRow): AuthUser {
     avatarKey: row.avatar_key,
     avatarUrl: avatarUrlForKey(row.avatar_key),
     hasPassword: Boolean(row.password_hash && row.password_salt),
-    role: row.role === "admin" ? "admin" : "player",
+    role: row.role && isAdminRole(row.role) ? row.role : "player",
   };
 }
 
