@@ -46,14 +46,33 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
 test("desktop lobby keeps the artwork and controls in balance", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop layout snapshot");
   await mockSignedInApi(page);
-  await page.setViewportSize({ width: 2048, height: 1088 });
   await page.goto("/");
 
   const hero = page.locator(".club-hero");
   const consolePanel = page.locator(".lobby-console");
-  await expect(hero).toBeVisible();
-  await expect(consolePanel).toBeVisible();
-  await expect(hero).toHaveCSS("min-height", "0px");
-  await expectNoHorizontalOverflow(page);
+  const viewports = [
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+    { width: 2048, height: 1088 },
+    { width: 2560, height: 1360 },
+  ];
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    await expect(hero).toBeVisible();
+    await expect(consolePanel).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    const heroBox = await hero.boundingBox();
+    const consoleBox = await consolePanel.boundingBox();
+    expect(heroBox).not.toBeNull();
+    expect(consoleBox).not.toBeNull();
+    expect(heroBox!.width).toBeGreaterThan(consoleBox!.width);
+    expect(consoleBox!.width).toBeGreaterThanOrEqual(520);
+    expect(viewport.height - (heroBox!.y + heroBox!.height)).toBeLessThan(220);
+  }
+
+  await page.setViewportSize({ width: 2560, height: 1360 });
+  await expect(page).toHaveScreenshot("home-desktop-wide.png", { fullPage: true });
+  await page.setViewportSize({ width: 2048, height: 1088 });
   await expect(page).toHaveScreenshot("home-desktop.png", { fullPage: true });
 });

@@ -3005,18 +3005,21 @@ body[data-theme="dark"] {
   .lobby-home-active > .topbar,
   .lobby-home-active .club-lobby-shell { width: min(100%, 2200px); }
   .lobby-home-active .club-lobby-shell {
-    --desktop-lobby-height: clamp(680px, calc(100dvh - 104px), 900px);
-    min-height: var(--desktop-lobby-height);
+    min-height: 0;
     grid-template-columns: minmax(0,1fr) minmax(520px,600px);
     align-items: stretch;
   }
   .lobby-home-active .club-hero {
-    height: var(--desktop-lobby-height);
-    min-height: 0;
+    width: 100%;
+    height: auto;
+    min-height: 620px;
+    max-height: calc(100dvh - 104px);
+    aspect-ratio: 1.45;
   }
+  .lobby-home-active .club-hero > .responsive-art img { object-position: 58% center; }
   .lobby-home-active .lobby-console {
-    height: var(--desktop-lobby-height);
-    max-height: none;
+    height: auto;
+    max-height: calc(100dvh - 104px);
   }
 }
 
