@@ -42,3 +42,18 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
   await expectNoHorizontalOverflow(page);
   await expect(page).toHaveScreenshot("account.png", { fullPage: true });
 });
+
+test("desktop lobby keeps the artwork and controls in balance", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "desktop layout snapshot");
+  await mockSignedInApi(page);
+  await page.setViewportSize({ width: 2048, height: 1088 });
+  await page.goto("/");
+
+  const hero = page.locator(".club-hero");
+  const consolePanel = page.locator(".lobby-console");
+  await expect(hero).toBeVisible();
+  await expect(consolePanel).toBeVisible();
+  await expect(hero).toHaveCSS("min-height", "0px");
+  await expectNoHorizontalOverflow(page);
+  await expect(page).toHaveScreenshot("home-desktop.png", { fullPage: true });
+});

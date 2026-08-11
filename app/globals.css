@@ -3001,6 +3001,25 @@ body[data-theme="dark"] {
   .club-lobby-shell, .ranked-lobby, .community-center { margin-top: 12px; }
 }
 
+@media (min-width: 1321px) {
+  .lobby-home-active > .topbar,
+  .lobby-home-active .club-lobby-shell { width: min(100%, 2200px); }
+  .lobby-home-active .club-lobby-shell {
+    --desktop-lobby-height: clamp(680px, calc(100dvh - 104px), 900px);
+    min-height: var(--desktop-lobby-height);
+    grid-template-columns: minmax(0,1fr) minmax(520px,600px);
+    align-items: stretch;
+  }
+  .lobby-home-active .club-hero {
+    height: var(--desktop-lobby-height);
+    min-height: 0;
+  }
+  .lobby-home-active .lobby-console {
+    height: var(--desktop-lobby-height);
+    max-height: none;
+  }
+}
+
 @media (max-width: 600px) {
   .topbar,
   .mobile-game-home,
