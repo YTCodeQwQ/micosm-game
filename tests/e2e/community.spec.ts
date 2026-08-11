@@ -74,6 +74,11 @@ test("mobile community supports discussion, announcements, and posting without o
   await page.getByRole("button", { name: /讨论区/ }).click();
   await page.getByRole("button", { name: /发布讨论/ }).first().click();
   await expect(page.getByRole("dialog", { name: "发布讨论" })).toBeVisible();
+  await page.getByRole("dialog", { name: "发布讨论" }).getByLabel(/标题/).fill("123");
+  await page.getByRole("dialog", { name: "发布讨论" }).getByLabel(/正文/).fill("123123");
+  await expect(page.getByRole("dialog", { name: "发布讨论" }).getByRole("button", { name: "发布" })).toBeEnabled();
+  await page.getByRole("dialog", { name: "发布讨论" }).getByRole("button", { name: "发布" }).click();
+  await expect(page.getByText(/标题至少 4 个字.*正文至少 8 个字/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ fullPage: true, path: testInfo.outputPath("community-mobile.png") });
 });

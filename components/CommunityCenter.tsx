@@ -58,6 +58,8 @@ const categories = [
 
 const categoryNames = Object.fromEntries(categories) as Record<string, string>;
 const announcementNames = { update: "版本更新", maintenance: "维护通知", event: "活动公告", rules: "规则调整", community: "社区公告" };
+const MIN_POST_TITLE_LENGTH = 4;
+const MIN_POST_BODY_LENGTH = 8;
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -179,6 +181,15 @@ export function CommunityCenter({ initialSection, onOpenGame, onOpenLiveLobby, o
 
   async function submitPost() {
     if (busy) return;
+    const titleLength = Array.from(postTitle.trim()).length;
+    const bodyLength = Array.from(postBody.trim()).length;
+    const problems = [];
+    if (titleLength < MIN_POST_TITLE_LENGTH) problems.push(`标题至少 ${MIN_POST_TITLE_LENGTH} 个字（还差 ${MIN_POST_TITLE_LENGTH - titleLength} 个）`);
+    if (bodyLength < MIN_POST_BODY_LENGTH) problems.push(`正文至少 ${MIN_POST_BODY_LENGTH} 个字（还差 ${MIN_POST_BODY_LENGTH - bodyLength} 个）`);
+    if (problems.length) {
+      setError(`还不能发布：${problems.join("；")}`);
+      return;
+    }
     setBusy("createPost");
     setError("");
     try {
@@ -333,7 +344,7 @@ export function CommunityCenter({ initialSection, onOpenGame, onOpenLiveLobby, o
         </div>
       )}
 
-      {composerOpen && <div className="community-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOpen(false); }}><section aria-label="发布讨论" aria-modal="true" className="community-composer" role="dialog"><header><div><small>NEW DISCUSSION</small><h2>发布讨论</h2></div><button aria-label="关闭" onClick={() => setComposerOpen(false)} type="button"><X size={18} /></button></header>{error && <div className="community-composer-error">{error}</div>}<label><span>分类</span><select onChange={(event) => setPostCategory(event.target.value)} value={postCategory}>{categories.filter(([id]) => id !== "all").map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label><span>标题</span><input maxLength={60} onChange={(event) => setPostTitle(event.target.value)} placeholder="一句话说清想讨论什么" value={postTitle} /></label><label><span>正文</span><textarea maxLength={3000} onChange={(event) => setPostBody(event.target.value)} placeholder="分享你的想法、疑问或关键手数……" rows={8} value={postBody} /></label><label><span>附加棋谱 <small>可选</small></span><select onChange={(event) => setSavedGameId(event.target.value)} value={savedGameId}><option value="">不附加棋谱</option>{savedGames.map((record) => <option key={record.id} value={record.id}>{record.title}</option>)}</select></label>{selectedAttachment && <div className="community-selected-game"><Gamepad2 size={18} /><div><strong>{selectedAttachment.title}</strong><small>{gameName(selectedAttachment.game)} · {selectedAttachment.moveCount} 手</small></div><button aria-label="移除棋谱" onClick={() => setSavedGameId("")} type="button"><X size={15} /></button></div>}<footer><span>{postBody.length} / 3000</span><button onClick={() => setComposerOpen(false)} type="button">取消</button><button className="primary" disabled={busy === "createPost" || postTitle.trim().length < 4 || postBody.trim().length < 8} onClick={() => void submitPost()} type="button">{busy === "createPost" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发布</button></footer></section></div>}
+      {composerOpen && <div className="community-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOpen(false); }}><section aria-label="发布讨论" aria-modal="true" className="community-composer" role="dialog"><header><div><small>NEW DISCUSSION</small><h2>发布讨论</h2></div><button aria-label="关闭" onClick={() => setComposerOpen(false)} type="button"><X size={18} /></button></header>{error && <div className="community-composer-error">{error}</div>}<label><span>分类</span><select onChange={(event) => setPostCategory(event.target.value)} value={postCategory}>{categories.filter(([id]) => id !== "all").map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label><span>标题 <small className={postTitle.trim().length > 0 && postTitle.trim().length < MIN_POST_TITLE_LENGTH ? "is-short" : ""}>至少 {MIN_POST_TITLE_LENGTH} 个字 · 当前 {Array.from(postTitle.trim()).length}</small></span><input aria-invalid={postTitle.trim().length > 0 && postTitle.trim().length < MIN_POST_TITLE_LENGTH} maxLength={60} onChange={(event) => { setPostTitle(event.target.value); setError(""); }} placeholder="一句话说清想讨论什么" value={postTitle} /></label><label><span>正文 <small className={postBody.trim().length > 0 && postBody.trim().length < MIN_POST_BODY_LENGTH ? "is-short" : ""}>至少 {MIN_POST_BODY_LENGTH} 个字 · 当前 {Array.from(postBody.trim()).length}</small></span><textarea aria-invalid={postBody.trim().length > 0 && postBody.trim().length < MIN_POST_BODY_LENGTH} maxLength={3000} onChange={(event) => { setPostBody(event.target.value); setError(""); }} placeholder="分享你的想法、疑问或关键手数……" rows={8} value={postBody} /></label><label><span>附加棋谱 <small>可选</small></span><select onChange={(event) => setSavedGameId(event.target.value)} value={savedGameId}><option value="">不附加棋谱</option>{savedGames.map((record) => <option key={record.id} value={record.id}>{record.title}</option>)}</select></label>{selectedAttachment && <div className="community-selected-game"><Gamepad2 size={18} /><div><strong>{selectedAttachment.title}</strong><small>{gameName(selectedAttachment.game)} · {selectedAttachment.moveCount} 手</small></div><button aria-label="移除棋谱" onClick={() => setSavedGameId("")} type="button"><X size={15} /></button></div>}<footer><span>{postBody.length} / 3000</span><button onClick={() => setComposerOpen(false)} type="button">取消</button><button className="primary" disabled={busy === "createPost"} onClick={() => void submitPost()} type="button">{busy === "createPost" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发布</button></footer></section></div>}
     </section>
   );
 }
