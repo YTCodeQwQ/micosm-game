@@ -67,8 +67,10 @@ test("desktop lobby keeps the artwork and controls in balance", async ({ page },
     expect(heroBox).not.toBeNull();
     expect(consoleBox).not.toBeNull();
     expect(heroBox!.width).toBeGreaterThan(consoleBox!.width);
-    expect(consoleBox!.width).toBeGreaterThanOrEqual(520);
-    expect(viewport.height - (heroBox!.y + heroBox!.height)).toBeLessThan(220);
+    expect(consoleBox!.width).toBeGreaterThanOrEqual(440);
+    expect(heroBox!.x).toBeLessThanOrEqual(24);
+    expect(viewport.width - (consoleBox!.x + consoleBox!.width)).toBeLessThanOrEqual(24);
+    expect(viewport.height - (heroBox!.y + heroBox!.height)).toBeLessThanOrEqual(20);
   }
 
   await page.setViewportSize({ width: 2560, height: 1360 });
