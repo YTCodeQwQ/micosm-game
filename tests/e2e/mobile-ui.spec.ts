@@ -34,6 +34,7 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /好友/ }).click();
   await expect(page.locator(".friend-panel > header").getByRole("heading", { name: "好友" })).toBeVisible();
   await expectNoHorizontalOverflow(page);
+  await expect(page).toHaveScreenshot("friends.png", { fullPage: true });
 
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /我的/ }).click();
   await expect(page.getByRole("button", { name: "进入浏览器全屏" })).toBeVisible();

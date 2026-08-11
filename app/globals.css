@@ -2967,3 +2967,128 @@ body[data-theme="dark"] {
   .mobile-account-page-open .account-summary strong { font-size: 15px; }
   .mobile-account-page-open .account-popover > button { font-size: 11px; }
 }
+
+/* Layout rhythm pass: align desktop surfaces and give mobile pages clearer hierarchy. */
+.account-action-list { display: contents; }
+.account-action-list > button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 7px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #686f79;
+  font-size: 12px;
+  cursor: pointer;
+}
+.account-action-list > button:hover { background: rgba(255,255,255,.76); color: #30353b; }
+
+@media (min-width: 821px) {
+  .topbar,
+  .app-grid,
+  .club-lobby-shell,
+  .ranked-lobby,
+  .community-center {
+    width: min(100%, 1600px);
+    margin-right: auto;
+    margin-left: auto;
+  }
+  .app-grid { margin-top: 14px; }
+  .club-lobby-shell, .ranked-lobby, .community-center { margin-top: 12px; }
+}
+
+@media (max-width: 600px) {
+  .topbar,
+  .mobile-game-home,
+  .mobile-primary-nav,
+  .community-center {
+    max-width: 480px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+  .topbar, .mobile-game-home { width: 100%; }
+
+  .mobile-primary-nav {
+    right: auto;
+    left: 50%;
+    width: calc(100% - 14px);
+    transform: translateX(-50%);
+  }
+
+  .mobile-account-page-open > .account-popover {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  .mobile-account-page-open .account-summary {
+    min-height: 96px;
+    padding: 12px 13px;
+    box-shadow: 0 8px 22px rgba(44,69,89,.08);
+  }
+  .mobile-account-page-open .account-action-list {
+    display: grid;
+    margin-top: 9px;
+    overflow: hidden;
+    border: 1px solid rgba(72,105,129,.1);
+    border-radius: 14px;
+    background: rgba(255,255,255,.9);
+    box-shadow: 0 7px 20px rgba(44,69,89,.055);
+  }
+  .mobile-account-page-open .account-action-list > button {
+    min-height: 47px;
+    margin: 0;
+    padding: 0 13px;
+    border-bottom: 1px solid rgba(72,105,129,.09);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #49697d;
+    font-size: 12px;
+  }
+  .mobile-account-page-open .account-action-list > button:last-child { border-bottom: 0; }
+  .mobile-account-page-open .account-action-list > button svg { color: #4c7a8d; }
+  .mobile-account-page-open .account-popover > button:last-child {
+    min-height: 46px;
+    margin-top: 10px;
+    border: 1px solid rgba(177,75,69,.13);
+    background: #fff5f3;
+    color: #aa4f4b;
+    box-shadow: none;
+  }
+
+  .mobile-friends-page-open .friend-panel-body section {
+    overflow: hidden;
+    border: 1px solid rgba(72,105,129,.09);
+    border-radius: 13px;
+    background: rgba(255,255,255,.72);
+  }
+  .mobile-friends-page-open .friend-section-label { padding: 9px 10px 6px; }
+  .mobile-friends-page-open .friend-row {
+    min-height: 60px;
+    padding: 7px 8px;
+    border-bottom: 1px solid rgba(72,105,129,.08);
+    border-radius: 0;
+  }
+  .mobile-friends-page-open .friend-row:last-child { border-bottom: 0; }
+  .mobile-friends-page-open .friend-row-actions { gap: 3px; }
+  .mobile-friends-page-open .friend-row-actions button.message,
+  .mobile-friends-page-open .friend-row-actions button.invite,
+  .mobile-friends-page-open .friend-row-actions button.positive { width: 34px; height: 34px; }
+  .mobile-friends-page-open .friend-row-actions button:not(.message):not(.invite):not(.positive) {
+    width: 29px;
+    height: 32px;
+    border-color: transparent;
+    background: transparent;
+    color: #8b9aa4;
+  }
+
+  .community-feed-toolbar,
+  .community-categories,
+  .community-post-list,
+  .community-layout,
+  .community-detail-layout { min-width: 0; }
+  .community-post-card { box-shadow: 0 5px 16px rgba(44,69,86,.045); }
+}

@@ -2736,12 +2736,14 @@ export default function HomePage() {
             <div><strong>{authUser.displayName}</strong><small>{authUser.publicId}</small><p>{authUser.signature || authUser.phone}</p></div>
             <ShieldCheck size={17} />
           </div>
-          <button onClick={openProfileEditor} type="button"><Pencil size={16} />编辑个人资料</button>
-          <button onClick={openHistoryView} type="button"><Clock3 size={16} />对局记录</button>
-          <button onClick={openSettings} type="button"><Settings2 size={16} />游戏设置</button>
-          {authUser.role !== "player" && <button onClick={() => { window.location.assign("/admin"); setAccountOpen(false); }} type="button"><ShieldAlert size={16} />管理后台</button>}
-          <button className="mobile-app-action" onClick={() => void toggleBrowserFullscreen()} type="button">{isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{isFullscreen ? "退出浏览器全屏" : "进入浏览器全屏"}</button>
-          <button className="mobile-app-action" disabled={isStandalone} onClick={() => void installMobileApp()} type="button">{isStandalone ? <Check size={16} /> : <Download size={16} />}{isStandalone ? "已从手机桌面启动" : "添加到手机桌面"}</button>
+          <div className="account-action-list">
+            <button onClick={openProfileEditor} type="button"><Pencil size={16} />编辑个人资料</button>
+            <button onClick={openHistoryView} type="button"><Clock3 size={16} />对局记录</button>
+            <button onClick={openSettings} type="button"><Settings2 size={16} />游戏设置</button>
+            {authUser.role !== "player" && <button onClick={() => { window.location.assign("/admin"); setAccountOpen(false); }} type="button"><ShieldAlert size={16} />管理后台</button>}
+            <button className="mobile-app-action" onClick={() => void toggleBrowserFullscreen()} type="button">{isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{isFullscreen ? "退出浏览器全屏" : "进入浏览器全屏"}</button>
+            <button className="mobile-app-action" disabled={isStandalone} onClick={() => void installMobileApp()} type="button">{isStandalone ? <Check size={16} /> : <Download size={16} />}{isStandalone ? "已从手机桌面启动" : "添加到手机桌面"}</button>
+          </div>
           {installGuide && <div className="mobile-install-guide" role="status"><Smartphone size={18} /><p>{installGuide}</p><button aria-label="关闭添加说明" onClick={dismissInstallGuide} type="button"><X size={15} /></button></div>}
           <button onClick={() => void signOut()} type="button"><LogOut size={16} />退出账号</button>
         </aside>
@@ -4392,7 +4394,7 @@ function FriendPanel({ busy, data, onAction, onChat, onClose, onConfirm, onInvit
                 <div className="friend-row" key={person.id}>
                   <FriendIdentity person={person} />
                   <div className="friend-row-actions">
-                    <button disabled={Boolean(busy)} onClick={() => onChat(person)} title="发送消息" type="button"><MessageCircle size={16} /></button>
+                    <button className="message" disabled={Boolean(busy)} onClick={() => onChat(person)} title="发送消息" type="button"><MessageCircle size={16} /></button>
                     <button className="invite" disabled={!person.online || Boolean(busy)} onClick={() => onInvite(person)} title={person.online ? "邀请对局" : "好友离线"} type="button"><Gamepad2 size={16} /></button>
                     <button disabled={Boolean(busy)} onClick={() => onConfirm({ type: "removeFriend", person })} title="删除好友" type="button"><Trash2 size={15} /></button>
                     <button disabled={Boolean(busy)} onClick={() => onConfirm({ type: "blockUser", person })} title="屏蔽用户" type="button"><X size={15} /></button>
