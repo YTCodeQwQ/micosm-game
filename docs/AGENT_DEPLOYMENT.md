@@ -1,11 +1,17 @@
 # Micosm Game deployment handoff for agents
 
-Last verified: 2026-08-09
+Last verified: 2026-08-11
 
 This document is the deployment source of truth for another coding or operations
 agent. Read the entire document before changing runtime configuration. The
 project is a stateful Cloudflare application with two optional native AI engine
 services; it is not a static React site.
+
+Start with [`PRODUCTION_AGENT_HANDOFF.md`](PRODUCTION_AGENT_HANDOFF.md). It
+defines the deployment agent's ownership boundary, required inputs, cutover
+sequence and completion report. SMS replacement is specified separately in
+[`AUTH_PROVIDER_HANDOFF.md`](AUTH_PROVIDER_HANDOFF.md); do not invent a provider
+contract during deployment.
 
 ## 1. Non-negotiable facts
 
@@ -25,6 +31,9 @@ services; it is not a static React site.
    behind an authenticated HTTPS reverse proxy or private network.
 7. Registration still uses the temporary invite code `abcd123`. SMS verification
    is not implemented and must be replaced before a public production launch.
+8. The full administrator console and operations dashboard are designs, not
+   current features. See `ADMIN_CONSOLE_DESIGN.md` and
+   `PRODUCTION_OPERATIONS_DESIGN.md` before claiming they are available.
 
 ## 2. Runtime architecture
 
@@ -315,6 +324,8 @@ Use two separate browsers or a browser plus a phone.
 11. Send friend, direct-chat and world-chat messages plus a room invitation.
 12. Start Go master and confirm `KataGo` appears as the room AI engine.
 13. Start Gomoku master in freestyle and Renju modes and confirm `Rapfi` appears.
+    Also run the tactical and latency gates in `AI_GOMOKU_PLAN.md`; service
+    readiness alone does not prove acceptable strength.
 14. Open the match archive from the account menu, load a finished match and
     move through its replay timeline. Verify resignation/departure/timeout
     reasons and both players' results are correct.
@@ -385,13 +396,16 @@ photo upload available as fallbacks.
 
 Before calling a deployment public production:
 
-1. Replace `TEMPORARY_INVITE_CODE = "abcd123"` with real SMS verification or a
-   secure server-side invitation system.
+1. Follow `AUTH_PROVIDER_HANDOFF.md` to replace
+   `TEMPORARY_INVITE_CODE = "abcd123"` with verified SMS tickets and the
+   owner-selected `required`, `optional` or `off` invitation policy.
 2. Set bearer tokens for both native AI services.
 3. Require HTTPS and keep secure session cookies enabled.
 4. Configure `MICO_ADMIN_PUBLIC_IDS` with the production moderator player IDs.
 5. Store D1 exports and R2 backups outside the application server and perform a restore drill.
-7. Add service supervision, structured logs and uptime alerts.
+6. Add service supervision, structured logs and uptime alerts.
+7. Run the Gomoku tactical/latency release gate after correcting the Rapfi
+   integration described in `AI_GOMOKU_PLAN.md`.
 8. Review Rapfi GPLv3 distribution compliance.
 
 ## 15. Agent completion report

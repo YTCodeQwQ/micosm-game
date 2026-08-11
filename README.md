@@ -42,6 +42,11 @@ not connected to a production provider yet.
 - `db/`: D1, R2 and Durable Object bindings
 - `scripts/`: optional KataGo and Rapfi service wrappers
 - `docs/AGENT_DEPLOYMENT.md`: deployment handoff and smoke tests
+- `docs/PRODUCTION_AGENT_HANDOFF.md`: launch-agent ownership and cutover checklist
+- `docs/AUTH_PROVIDER_HANDOFF.md`: SMS and invitation replacement contract
+- `docs/AI_GOMOKU_PLAN.md`: Gomoku AI diagnosis and benchmark plan
+- `docs/ADMIN_CONSOLE_DESIGN.md`: planned administrator backend
+- `docs/PRODUCTION_OPERATIONS_DESIGN.md`: planned production operations console
 
 ## Useful Commands
 
