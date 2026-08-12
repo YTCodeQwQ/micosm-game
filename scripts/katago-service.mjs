@@ -1,19 +1,14 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configuredProjectPath, defaultKataGoExecutable } from "./runtime-paths.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-function configuredPath(value, fallback) {
-  const selected = value?.trim() || fallback;
-  return isAbsolute(selected) ? selected : resolve(root, selected);
-}
-
-const defaultExecutable = process.platform === "win32" ? ".tools/katago/engine/katago.exe" : ".tools/katago/engine/katago";
-const executable = configuredPath(process.env.KATAGO_EXE, defaultExecutable);
-const model = configuredPath(process.env.KATAGO_MODEL, ".tools/katago/kata1-b28c512.bin.gz");
-const config = configuredPath(process.env.KATAGO_CONFIG, ".tools/katago/engine/default_gtp.cfg");
+const executable = configuredProjectPath(root, process.env.KATAGO_EXE, defaultKataGoExecutable());
+const model = configuredProjectPath(root, process.env.KATAGO_MODEL, ".tools/katago/kata1-b28c512.bin.gz");
+const config = configuredProjectPath(root, process.env.KATAGO_CONFIG, ".tools/katago/engine/default_gtp.cfg");
 const port = Math.max(1, Math.min(65535, Number(process.env.KATAGO_SERVICE_PORT) || 3210));
 const host = process.env.KATAGO_SERVICE_HOST?.trim() || "127.0.0.1";
 const serviceToken = process.env.KATAGO_SERVICE_TOKEN?.trim() || "";
@@ -47,7 +42,7 @@ let queue = Promise.resolve();
 const engine = spawn(executable, ["gtp", "-model", model, "-config", config], {
   cwd: dirname(executable),
   stdio: ["pipe", "pipe", "pipe"],
-  windowsHide: false,
+  windowsHide: true,
 });
 
 engine.stderr.setEncoding("utf8");

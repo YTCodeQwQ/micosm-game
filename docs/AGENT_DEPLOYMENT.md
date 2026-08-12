@@ -1,6 +1,6 @@
 # Micosm Game deployment handoff for agents
 
-Last verified: 2026-08-11
+Last verified: 2026-08-13
 
 This document is the deployment source of truth for another coding or operations
 agent. Read the entire document before changing runtime configuration. The
@@ -12,6 +12,12 @@ defines the deployment agent's ownership boundary, required inputs, cutover
 sequence and completion report. SMS replacement is specified separately in
 [`AUTH_PROVIDER_HANDOFF.md`](AUTH_PROVIDER_HANDOFF.md); do not invent a provider
 contract during deployment.
+
+Linux compute-node setup is implemented in [`LINUX_DEPLOYMENT.md`](LINUX_DEPLOYMENT.md).
+The repository includes systemd units, an environment template, an authenticated
+Nginx reverse-proxy example and shell-independent D1/R2 backup and restore
+commands. `start-server.bat` is only a Windows development convenience and is
+not part of the production path.
 
 ## 1. Non-negotiable facts
 
@@ -25,17 +31,18 @@ contract during deployment.
    commit it or treat it as a production backup.
 4. KataGo and Rapfi binaries/models live under ignored `.tools/`. Git checkout
    alone does not include either strong AI engine.
-5. A public URL must use HTTPS. Mobile camera scanning also requires a secure
-   context; plain HTTP is suitable only for localhost or basic LAN testing.
+5. A public URL must use HTTPS. Plain HTTP is suitable only for localhost or
+   basic LAN testing.
 6. Do not expose ports 3210 or 3211 directly to the public internet. Put them
    behind an authenticated HTTPS reverse proxy or private network.
-7. Registration still uses the temporary invite code `abcd123`. SMS verification
-   is not implemented and must be replaced before a public production launch.
-8. `/admin` Phase 1 is implemented with persistent roles, overview metrics,
-   user lookup/session revocation, report moderation, AI health and append-only
-   audit views. Match inspection, ranking operations, announcements and the
-   operations dashboard remain planned. See `ADMIN_CONSOLE_DESIGN.md` and
-   `PRODUCTION_OPERATIONS_DESIGN.md` for the exact boundary.
+7. Registration uses managed D1 beta invites. `ABCD123` is a seeded compatibility
+   code that a super administrator can disable. SMS verification is not
+   implemented and must be connected before a public production launch.
+8. `/admin` includes persistent roles, user/session tools, moderation, match and
+   replay inspection, audited ranking corrections, announcements, versioned
+   policies, discussion operations, AI health, feature flags and audit views.
+   External release/backup/incident tracking remains planned. See
+   `ADMIN_CONSOLE_DESIGN.md` and `PRODUCTION_OPERATIONS_DESIGN.md`.
 
 ## 2. Runtime architecture
 
@@ -81,16 +88,18 @@ tiers need native services.
 | `scripts/katago-service.mjs` | KataGo HTTP wrapper |
 | `scripts/rapfi-service.mjs` | Rapfi HTTP wrapper |
 | `docs/ai-deployment.md` | detailed AI variable reference |
+| `docs/LINUX_DEPLOYMENT.md` | Linux systemd, native assets and portable operations |
 
 ## 4. Local development
 
 ### Install and verify
 
-```powershell
-npm.cmd install
-npm.cmd test
-npm.cmd run lint
-npm.cmd run ai:gomoku:benchmark
+```bash
+npm ci
+npm test
+npm run lint
+npm run verify:linux
+npm run ai:gomoku:benchmark
 ```
 
 The lint command should complete with zero errors and zero warnings.
@@ -99,19 +108,19 @@ The lint command should complete with zero errors and zero warnings.
 
 Open a separate terminal for each long-running process:
 
-```powershell
+```bash
 # Terminal 1: web application, D1/R2 emulation and Durable Object
-npm.cmd run dev
+npm run dev
 ```
 
-```powershell
+```bash
 # Terminal 2: KataGo, optional unless testing Go master difficulty
-npm.cmd run ai
+npm run ai
 ```
 
-```powershell
+```bash
 # Terminal 3: Rapfi, optional unless testing Gomoku master difficulty
-npm.cmd run ai:gomoku
+npm run ai:gomoku
 ```
 
 Expected listeners:
@@ -129,17 +138,9 @@ Local URL: `http://127.0.0.1:3000/`.
 `npm run dev` already binds to `0.0.0.0`. Find the active IPv4 address and open
 `http://<LAN-IP>:3000/` from a phone on the same network.
 
-Set the public LAN origin before starting Vite so generated room QR codes do not
-contain `localhost`:
-
-```powershell
-$env:VITE_LAN_ORIGIN="http://192.168.x.x:3000"
-npm.cmd run dev
-```
-
-Do not hard-code the current development machine address; DHCP can change it.
-Camera APIs may be unavailable over LAN HTTP. Room-code entry and photo-based QR
-recognition remain valid fallbacks.
+Do not hard-code the current development-machine address; DHCP can change it.
+Players join private rooms by entering the six-character invitation code. QR
+room generation and scanning have been removed.
 
 ## 5. Native AI assets
 
@@ -190,7 +191,6 @@ platform's encrypted secret/variable system.
 | `AI_RAPFI_SECONDS` | optional | Maximum seconds per Gomoku move, 0.5-30 | `2.5` |
 | `MICO_ADMIN_PUBLIC_IDS` | production | Emergency bootstrap `MG-...` IDs promoted to `super_admin` | empty |
 | `HEALTH_CHECK_AI` | optional | Include both native engines in every health probe | `false` |
-| `VITE_LAN_ORIGIN` | local/LAN only | Build-time room QR origin override | current page origin |
 
 ### KataGo service
 
@@ -265,7 +265,10 @@ PLATFORM_HUB -> Durable Object namespace using class PlatformHub
 entry point. It provisions the complete application schema and records applied
 versions in `app_schema_migrations`. `db/schema.ts` mirrors the complete schema.
 After binding a fresh or existing D1 database, call `/api/health` and verify
-versions `1` and `2` before opening traffic.
+versions `1` through `11` before opening traffic. Version 10 adds named rank
+seasons and immutable season standings; version 11 adds the beta programme,
+managed invites and feedback. Do not mark a release healthy
+when a version is missing even if the homepage still renders.
 
 Authentication schema initialization also backfills a stable `MG-XXXXXXXXXX`
 public ID for existing users and creates a unique index on `users.public_id`.
@@ -294,18 +297,18 @@ a production migration strategy.
 
 ### Local AI services
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:3210/health
-Invoke-RestMethod http://127.0.0.1:3211/health
+```bash
+curl http://127.0.0.1:3210/health
+curl http://127.0.0.1:3211/health
 ```
 
 Both responses must contain `ready: true`.
 
 ### Through the web application
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:3000/api/ai
-Invoke-RestMethod 'http://127.0.0.1:3000/api/ai?engine=rapfi'
+```bash
+curl http://127.0.0.1:3000/api/health
+curl 'http://127.0.0.1:3000/api/health?deep=1'
 ```
 
 These AI endpoints require an authenticated session. For an operator probe use
@@ -322,7 +325,7 @@ Use two separate browsers or a browser plus a phone.
    users receive different stable `MG-` public IDs and can be searched by ID.
 2. Log out and log back in; refresh and verify the session survives.
 3. Upload avatars and verify both clients can load them from R2.
-4. Create a private room, join by invitation code and join by QR code.
+4. Create a private room and join from a second client with its six-character invitation code.
 5. Confirm room WebSocket updates arrive without manual refresh.
 6. Play Gomoku and verify win, forbidden move, undo consent, formal resignation
    and rematch.
@@ -344,7 +347,7 @@ Use two separate browsers or a browser plus a phone.
     11 imported copies and confirm the server retains exactly 10.
 15. Verify desktop and mobile layouts at narrow and wide viewports.
 
-## 12. Public tunnel and QR guidance
+## 12. Public tunnel guidance
 
 For temporary remote testing, tunnel only web port 3000. The public address must
 be HTTPS, for example `https://example.ngrok-free.dev`, not HTTP.
@@ -358,17 +361,13 @@ Vite currently allows `.ngrok-free.dev` hosts. When using another tunnel domain,
 add its exact trusted suffix to `server.allowedHosts` in `vite.config.ts`; do not
 use an unrestricted `allowedHosts: true` in a public environment.
 
-Room QR codes use the current browser origin. Therefore open the site through
-the final HTTPS tunnel URL before creating the room. A QR generated while using
-`localhost` will point the phone back to itself unless `VITE_LAN_ORIGIN` is set.
-
 ## 13. Troubleshooting
 
 ### `501 Not Implemented #85`
 
 Cause: HTTP access to a Sakura Frp/Natfrp tunnel is blocked. Use HTTPS and enable
 automatic HTTPS in the tunnel configuration. No application restart is required
-unless the public origin changes QR generation.
+unless the public origin or proxy route changes.
 
 ### `403` or Vite invalid-host response
 
@@ -399,19 +398,12 @@ Verify the proxy supports `Upgrade: websocket`, both Durable Object bindings
 exist, and `/api/realtime?roomId=<CODE>` plus `/api/platform-realtime` reach
 `worker/index.ts`. Authentication cookies must be forwarded during the upgrade.
 
-### Camera scan is unavailable or spins forever
-
-Use HTTPS, grant camera permission and test in a full browser rather than an
-embedded browser with restricted camera APIs. Keep invitation-code entry and
-photo upload available as fallbacks.
-
 ## 14. Security and launch blockers
 
 Before calling a deployment public production:
 
-1. Follow `AUTH_PROVIDER_HANDOFF.md` to replace
-   `TEMPORARY_INVITE_CODE = "abcd123"` with verified SMS tickets and the
-   owner-selected `required`, `optional` or `off` invitation policy.
+1. Follow `AUTH_PROVIDER_HANDOFF.md` to add verified SMS tickets and the
+   owner-selected `required`, `optional` or `off` managed-invitation policy.
 2. Set bearer tokens for both native AI services.
 3. Require HTTPS and keep secure session cookies enabled.
 4. Configure `MICO_ADMIN_PUBLIC_IDS` with the owner's production player ID for

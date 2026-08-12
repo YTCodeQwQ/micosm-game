@@ -1,21 +1,23 @@
 # Administrator Console Design
 
-Status: Phase 1 foundation plus the report/user portions of Phase 2 are
-implemented. Separate short-lived admin sessions remain pending.
+Status: core administration, game operations, content operations, policies and
+feature controls are implemented. Separate short-lived admin sessions and data
+rights workflows remain pending.
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-12
 
 ## Current State
 
 The application has a dedicated `/admin` workspace with server-enforced roles.
 It includes an overview, user search, session revocation, role assignment,
-report moderation, active sanctions, KataGo/Rapfi health and append-only audit
-history. Desktop is the primary operating surface; mobile supports urgent
+report moderation, active sanctions, live/archive match inspection, replay,
+audited rank correction, announcements, versioned policies, discussion content
+operations, super-admin-managed rank seasons, KataGo/Rapfi health, server-side feature controls and append-only
+audit history. Desktop is the primary operating surface; mobile supports urgent
 review and account restriction, not dense analytics.
 
-Match/room inspection, ranking operations, AI availability controls,
-announcements, policies and the operations dashboard remain planned. The
-browser console intentionally does not expose database restore or secret edits.
+The browser console intentionally does not expose database restore, cloud
+credentials, secret edits or host-level restart actions.
 
 ## Roles
 
@@ -23,9 +25,9 @@ Use server-enforced permissions rather than one all-powerful client flag:
 
 | Role | Scope |
 | --- | --- |
-| `super_admin` | role assignment, destructive policy changes and all modules |
-| `admin` | users, matches, ranking, announcements and moderation |
-| `moderator` | reports, chat deletion, warnings, mute and temporary ban |
+| `super_admin` | role assignment, rank-season lifecycle, destructive policy changes and all modules |
+| `admin` | users, matches, rank corrections, announcements, policies and moderation; no season lifecycle writes |
+| `moderator` | reports, discussion operations, chat deletion, mute and temporary ban |
 | `support` | read-only user/match lookup and account-recovery assistance |
 | `operator` | health, AI, releases, backups and incident status |
 
@@ -82,8 +84,15 @@ user password directly; support initiates the verified recovery process.
 
 - Separate Go and Gomoku ladders.
 - Rating distribution, top players, suspicious streaks and settlement failures.
-- Season configuration and read-only preview before activation.
+- Named season drafts with start/end time, enabled games and rating carry-over.
+- Only `super_admin` may activate, stop entry, finalize or delete a draft.
+- Season lifecycle is `draft -> active -> closing -> closed`; closing clears the
+  queue but never interrupts a match that has already started.
+- Finalization is blocked while ranked matches remain active, then creates an
+  immutable per-game standings snapshot.
 - Audited corrections with automatic consistency checks.
+- Closed-season settlements cannot be corrected because the next season may
+  already have inherited their rating result.
 - No ranking controls for Reversi.
 
 ### AI And Runtime
@@ -133,8 +142,10 @@ manages versioning and publication.
 /api/admin/moderation
 /api/admin/matches
 /api/admin/ranking
+/api/admin/ranking/seasons
 /api/admin/ai
 /api/admin/announcements
+/api/admin/community
 /api/admin/policies
 /api/admin/audit
 /api/admin/operations
@@ -150,6 +161,7 @@ Do not expose a generic SQL endpoint.
 - Policy acceptance records.
 - Account export/deletion requests.
 - Rank correction records.
+- Rank seasons, season IDs on queues/matches and immutable standings snapshots.
 - Append-only admin audit entries with request IDs and before/after summaries.
 
 All additions use versioned, additive D1 migrations.
@@ -162,20 +174,22 @@ Implemented: dedicated layout, role/permission middleware, navigation, audit
 writer and overview shell. Remaining: a separate short-lived admin session and
 recent-password re-authentication flow for the highest-risk mutations.
 
-### Phase 2: Safety And Support (partially implemented)
+### Phase 2: Safety And Support (mostly implemented)
 
 Implemented: moderation tools, user search, session revocation and role
-assignment. Remaining: warnings, internal notes and match/replay lookup.
+assignment, match/replay lookup and discussion operations. Remaining: warnings,
+case assignment, internal notes and appeal workflows.
 
-### Phase 3: Game Operations
+### Phase 3: Game Operations (implemented)
 
-Add room inspection, ranking diagnostics/corrections, AI health and feature
-availability controls.
+Room inspection, archived replay, ranking diagnostics/corrections, managed rank
+seasons, AI health and feature availability controls are implemented. See
+`RANK_SEASON_OPERATIONS.md` for the season runbook.
 
-### Phase 4: Policies And Data Rights
+### Phase 4: Policies And Data Rights (partially implemented)
 
-Add announcements, versioned policy pages, acceptance records and controlled
-account export/deletion workflows.
+Announcements and versioned policy pages are implemented. Material-policy
+acceptance records and controlled account export/deletion workflows remain.
 
 ### Phase 5: Operational Visibility
 
@@ -184,7 +198,6 @@ Add the read-only release, backup, incident and alert views described in
 
 ## Next Development Slice
 
-Complete read-only match/replay inspection first, then ranking diagnostics and
-audited correction workflows. Add AI availability controls only after their
-runtime state has durable storage and a safe drain path; a browser toggle must
-not terminate an in-flight engine request.
+Add short-lived admin sessions with recent-password re-authentication, then the
+account export/deletion request workflow and moderation case assignment. Keep
+release records, backups, restore and host restart outside browser-only trust.

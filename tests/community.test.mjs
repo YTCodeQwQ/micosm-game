@@ -6,6 +6,7 @@ import {
   cleanPostTitle,
   discussionCategory,
   ensureCommunitySchema,
+  extractDiscussionMentions,
 } from "../lib/community.ts";
 
 test("community text and category input is normalized", () => {
@@ -15,6 +16,15 @@ test("community text and category input is normalized", () => {
   assert.equal(discussionCategory("gomoku"), "gomoku");
   assert.equal(discussionCategory("unknown"), "general");
   assert.ok(Array.from(cleanPostTitle("棋".repeat(100))).length <= 60);
+});
+
+test("community mentions support usernames and stable player IDs without duplicates", () => {
+  assert.deepEqual(
+    extractDiscussionMentions("请看 @星海棋手 的变化，也请 @MG-ABCD1234 看看。再次 @星海棋手"),
+    ["星海棋手", "MG-ABCD1234"],
+  );
+  assert.deepEqual(extractDiscussionMentions("邮箱 a@b.com 不会被当作用户名，但 @有效用户 会"), ["有效用户"]);
+  assert.equal(extractDiscussionMentions(Array.from({ length: 20 }, (_, index) => `@用户${index}`).join(" ")).length, 10);
 });
 
 test("community schema includes announcements, discussions, reactions, and reviewable reports", async () => {

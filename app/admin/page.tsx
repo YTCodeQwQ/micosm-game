@@ -4,19 +4,24 @@ import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity, ArrowLeft, Ban, Bot, Check, ChevronRight, CircleGauge, Clock3, Gamepad2, History,
-  LoaderCircle, LogOut, Megaphone, MessageSquareWarning, RefreshCw, Search, ShieldCheck, ShieldX, UserCog,
-  Users, VolumeX, X,
+  Activity, ArrowLeft, Ban, BookOpenCheck, Bot, Check, ChevronRight, CircleGauge, Clock3, FlaskConical, Gamepad2, History,
+  LoaderCircle, LogOut, Megaphone, MessageCircle, MessageSquareWarning, RefreshCw, Search, ShieldCheck, ShieldX, UserCog,
+  Users, VolumeX, Wrench, X,
 } from "lucide-react";
 import styles from "./admin.module.css";
 import { AdminAnnouncements } from "./AdminAnnouncements";
+import { AdminGameOperations } from "./AdminGameOperations";
+import { AdminPolicies } from "./AdminPolicies";
+import { AdminOperations } from "./AdminOperations";
+import { AdminCommunity } from "./AdminCommunity";
+import { AdminBetaCenter } from "./AdminBetaCenter";
 
 type Permission =
   | "overview.read" | "users.read" | "users.sanction" | "users.sessions" | "reports.read" | "reports.write"
-  | "matches.read" | "ranking.read" | "ranking.write" | "ai.read" | "ai.write" | "announcements.write"
-  | "audit.read" | "roles.write" | "operations.read";
+  | "matches.read" | "ranking.read" | "ranking.write" | "ranking.seasons.write" | "ai.read" | "ai.write" | "announcements.write"
+  | "community.write" | "policies.read" | "policies.write" | "audit.read" | "roles.write" | "operations.read" | "operations.write" | "beta.manage";
 type AdminRole = "super_admin" | "admin" | "moderator" | "support" | "operator";
-type View = "overview" | "users" | "moderation" | "announcements" | "ai" | "audit";
+type View = "overview" | "beta" | "users" | "moderation" | "games" | "announcements" | "community" | "policies" | "ai" | "operations" | "audit";
 
 type Overview = {
   actor: { id: string; publicId: string; displayName: string; role: AdminRole; permissions: Permission[] };
@@ -81,6 +86,11 @@ export default function AdminPage() {
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [reason, setReason] = useState("");
   const [announcementRevision, setAnnouncementRevision] = useState(0);
+  const [communityRevision, setCommunityRevision] = useState(0);
+  const [gameOpsRevision, setGameOpsRevision] = useState(0);
+  const [policyRevision, setPolicyRevision] = useState(0);
+  const [operationsRevision, setOperationsRevision] = useState(0);
+  const [betaRevision, setBetaRevision] = useState(0);
 
   const permissions = useMemo(() => new Set(overview?.actor.permissions ?? []), [overview]);
 
@@ -170,10 +180,15 @@ export default function AdminPage() {
         <Link className={styles.brand} href="/"><span><ShieldCheck size={23} /></span><div><strong>Micosm</strong><small>管理工作台</small></div></Link>
         <nav aria-label="后台导航">
           <NavButton active={view === "overview"} icon={<CircleGauge size={18} />} label="概览" onClick={() => setView("overview")} />
+          {permissions.has("beta.manage") && <NavButton active={view === "beta"} icon={<FlaskConical size={18} />} label="内测中心" onClick={() => setView("beta")} />}
           {permissions.has("users.read") && <NavButton active={view === "users"} icon={<Users size={18} />} label="用户" onClick={() => setView("users")} />}
           {permissions.has("reports.read") && <NavButton active={view === "moderation"} badge={overview.stats.openReports} icon={<MessageSquareWarning size={18} />} label="举报与处罚" onClick={() => setView("moderation")} />}
+          {permissions.has("matches.read") && <NavButton active={view === "games"} icon={<Gamepad2 size={18} />} label="对局与排位" onClick={() => setView("games")} />}
           {permissions.has("announcements.write") && <NavButton active={view === "announcements"} icon={<Megaphone size={18} />} label="公告" onClick={() => setView("announcements")} />}
+          {permissions.has("community.write") && <NavButton active={view === "community"} icon={<MessageCircle size={18} />} label="讨论运营" onClick={() => setView("community")} />}
+          {permissions.has("policies.read") && <NavButton active={view === "policies"} icon={<BookOpenCheck size={18} />} label="协议与规则" onClick={() => setView("policies")} />}
           {permissions.has("ai.read") && <NavButton active={view === "ai"} icon={<Bot size={18} />} label="AI 运行状态" onClick={() => setView("ai")} />}
+          {permissions.has("operations.read") && <NavButton active={view === "operations"} icon={<Wrench size={18} />} label="运行控制台" onClick={() => setView("operations")} />}
           {permissions.has("audit.read") && <NavButton active={view === "audit"} icon={<History size={18} />} label="操作审计" onClick={() => setView("audit")} />}
         </nav>
         <div className={styles.actor}><span>{overview.actor.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{overview.actor.displayName}</strong><small>{ROLE_LABELS[overview.actor.role]}</small></div></div>
@@ -182,13 +197,18 @@ export default function AdminPage() {
 
       <section className={styles.workspace}>
         <header className={styles.topbar}>
-          <div><small>ADMIN CONSOLE</small><h1>{view === "overview" ? "运行概览" : view === "users" ? "用户与权限" : view === "moderation" ? "举报与处罚" : view === "announcements" ? "社区公告" : view === "ai" ? "AI 运行状态" : "操作审计"}</h1></div>
-          <button aria-label="刷新当前页面" onClick={() => { if (view === "overview") void loadOverview(); else if (view === "users") void loadUsers(); else if (view === "moderation") void loadModeration(); else if (view === "announcements") setAnnouncementRevision((value) => value + 1); else if (view === "ai") void loadAi(); else void loadAudit(); }} type="button"><RefreshCw className={busy.startsWith("load:") ? styles.spin : ""} size={18} /></button>
+          <div><small>ADMIN CONSOLE</small><h1>{view === "overview" ? "运行概览" : view === "beta" ? "内测中心" : view === "users" ? "用户与权限" : view === "moderation" ? "举报与处罚" : view === "games" ? "对局与排位" : view === "announcements" ? "社区公告" : view === "community" ? "讨论内容运营" : view === "policies" ? "协议与规则" : view === "ai" ? "AI 运行状态" : view === "operations" ? "运行控制台" : "操作审计"}</h1></div>
+          <button aria-label="刷新当前页面" onClick={() => { if (view === "overview") void loadOverview(); else if (view === "beta") setBetaRevision((value) => value + 1); else if (view === "users") void loadUsers(); else if (view === "moderation") void loadModeration(); else if (view === "games") setGameOpsRevision((value) => value + 1); else if (view === "announcements") setAnnouncementRevision((value) => value + 1); else if (view === "community") setCommunityRevision((value) => value + 1); else if (view === "policies") setPolicyRevision((value) => value + 1); else if (view === "ai") void loadAi(); else if (view === "operations") setOperationsRevision((value) => value + 1); else void loadAudit(); }} type="button"><RefreshCw className={busy.startsWith("load:") ? styles.spin : ""} size={18} /></button>
         </header>
         {error && <div className={styles.error}><ShieldX size={17} /><span>{error}</span><button onClick={() => setError("")} type="button"><X size={15} /></button></div>}
         {notice && <div className={styles.notice}><Check size={17} />{notice}</div>}
 
         {view === "announcements" && <AdminAnnouncements onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} revision={announcementRevision} />}
+        {view === "community" && <AdminCommunity onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} revision={communityRevision} />}
+        {view === "games" && <AdminGameOperations canManageSeasons={permissions.has("ranking.seasons.write")} canWriteRank={permissions.has("ranking.write")} onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} revision={gameOpsRevision} />}
+        {view === "policies" && <AdminPolicies canWrite={permissions.has("policies.write")} onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} revision={policyRevision} />}
+        {view === "operations" && <AdminOperations canWrite={permissions.has("operations.write")} onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} revision={operationsRevision} />}
+        {view === "beta" && <AdminBetaCenter onError={setError} onNotice={(message) => { setNotice(message); window.setTimeout(() => setNotice(""), 2800); }} onOpenSeasons={() => setView("games")} revision={betaRevision} />}
 
         {view === "overview" && <OverviewView data={overview} />}
         {view === "users" && <section className={styles.pageSection}>

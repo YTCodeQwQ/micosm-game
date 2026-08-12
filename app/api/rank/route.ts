@@ -1,6 +1,6 @@
 import { getD1 } from "../../../db";
 import { avatarUrlForKey, ensureAuthSchema, getSessionUser } from "../../../lib/auth";
-import { ensureRankSchema, rankLabel, rankProgress } from "../../../lib/rank";
+import { ensureRankSchema, publicRankSeason, rankLabel, rankProgress, rankSeasonForGame } from "../../../lib/rank";
 
 type RankGame = "go" | "gomoku";
 type ProfileRow = {
@@ -37,6 +37,7 @@ export async function GET(request: Request) {
     const user = await getSessionUser(request, d1);
     if (!user) return Response.json({ error: { code: "auth_required", message: "请先登录" } }, { status: 401 });
     const game = new URL(request.url).searchParams.get("game") === "gomoku" ? "gomoku" : "go";
+    const seasonState = await rankSeasonForGame(d1, game);
     const now = Date.now();
     for (const rankGame of ["go", "gomoku"] as const) {
       await d1.prepare("INSERT OR IGNORE INTO rank_profiles (user_id, game, rating, peak_rating, wins, losses, draws, streak, matches, updated_at) VALUES (?, ?, 0, 0, 0, 0, 0, 0, 0, ?)")
@@ -52,6 +53,9 @@ export async function GET(request: Request) {
     const position = await d1.prepare("SELECT COUNT(*) AS count FROM rank_profiles WHERE game = ? AND matches > 0 AND (rating > ? OR (rating = ? AND wins > ?))")
       .bind(game, current.rating, current.rating, current.wins).first<{ count: number }>();
     return Response.json({
+      season: seasonState.season ? publicRankSeason(seasonState.season) : null,
+      seasonPlayable: seasonState.playable,
+      seasonReason: seasonState.reason,
       profiles: Object.fromEntries(profiles.results.map((profile) => [profile.game, publicProfile(profile)])),
       position: current.matches ? (position?.count ?? 0) + 1 : null,
       leaderboard: leaderboard.results.map((row, index) => ({

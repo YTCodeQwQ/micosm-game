@@ -1,6 +1,6 @@
 # Production Agent Handoff
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-13
 
 ## Purpose
 
@@ -18,23 +18,49 @@ Read these documents in order:
 
 1. [`AGENT_DEPLOYMENT.md`](AGENT_DEPLOYMENT.md): exact runtime architecture,
    bindings, variables, release commands and smoke tests.
-2. [`AUTH_PROVIDER_HANDOFF.md`](AUTH_PROVIDER_HANDOFF.md): how to replace the
-   temporary registration invite with an SMS provider after credentials arrive.
+2. [`AUTH_PROVIDER_HANDOFF.md`](AUTH_PROVIDER_HANDOFF.md): how to connect an SMS
+   provider to the existing managed-invitation flow after credentials arrive.
 3. [`ai-deployment.md`](ai-deployment.md): KataGo and Rapfi host requirements.
-4. [`AI_GOMOKU_PLAN.md`](AI_GOMOKU_PLAN.md): known Gomoku AI latency/strength
+4. [`LINUX_DEPLOYMENT.md`](LINUX_DEPLOYMENT.md): Linux systemd units, native
+   asset layout and cross-platform backup/restore commands.
+5. [`BETA_TEST_OPERATIONS.md`](BETA_TEST_OPERATIONS.md): beta switches,
+   invitation management, beta season and feedback workflow.
+6. [`AI_GOMOKU_PLAN.md`](AI_GOMOKU_PLAN.md): known Gomoku AI latency/strength
    findings and the required benchmark before changing an engine or model.
-5. [`OPERATIONS.md`](OPERATIONS.md): current backup, health and rollback runbook.
-6. [`PRODUCTION_OPERATIONS_DESIGN.md`](PRODUCTION_OPERATIONS_DESIGN.md): planned
+7. [`OPERATIONS.md`](OPERATIONS.md): current backup, health and rollback runbook.
+8. [`PRODUCTION_OPERATIONS_DESIGN.md`](PRODUCTION_OPERATIONS_DESIGN.md): planned
    operator console and alerting workflow; planned items are not yet implemented.
-7. [`MOBILE_QA.md`](MOBILE_QA.md): required real-device release matrix.
-8. [`GAME_RECORD_FORMAT.md`](GAME_RECORD_FORMAT.md): cloud-save retention and
+9. [`MOBILE_QA.md`](MOBILE_QA.md): required real-device release matrix.
+10. [`GAME_RECORD_FORMAT.md`](GAME_RECORD_FORMAT.md): cloud-save retention and
    the versioned local replay-file contract.
 
 The admin-console product design and implementation boundary are in
-[`ADMIN_CONSOLE_DESIGN.md`](ADMIN_CONSOLE_DESIGN.md). `/admin` Phase 1 is
-implemented: persistent roles, overview, user/session tools, report moderation,
-AI health and audit history. Match/ranking operations, announcements and the
-operations dashboard are still planned.
+[`ADMIN_CONSOLE_DESIGN.md`](ADMIN_CONSOLE_DESIGN.md). `/admin` now includes
+persistent roles, user/session tools, report moderation, live/archive match
+inspection, audited ranking corrections, announcements, versioned policies,
+discussion operations, AI health, feature flags and audit history. Separate
+short-lived admin sessions, account data-rights workflows and external
+release/backup/incident records remain pending.
+
+## Current Application State
+
+- Runtime migrations are additive and currently record versions `1` through
+  `11`. Version 6 adds rank-correction operations, 7 versioned policies, 8
+  feature flags, 9 persistent user notifications, 10 managed rank seasons and
+  11 the beta programme, managed invites and player feedback.
+- Rank seasons are managed from `/admin` by `super_admin` only. Do not create
+  or rename a production season with direct SQL. Read
+  [`RANK_SEASON_OPERATIONS.md`](RANK_SEASON_OPERATIONS.md) before launch.
+- Private rooms support per-move clocks, per-player total time and, for Go,
+  main time plus configurable byo-yomi periods. Ranked clocks remain fixed by
+  the server.
+- Persistent notifications cover friends, invites, direct messages, community
+  replies/mentions and match results. Realtime events only accelerate refresh;
+  D1 remains the source of truth.
+- Community feed search and `@username` / `@MG-ID` mentions are implemented.
+  Moderators can pin, feature, lock, hide and restore posts with an audit reason.
+- Operations feature flags are enforced server-side. They are not a deployment
+  substitute and do not change already active matches.
 
 ## Required Inputs From The Owner
 
@@ -59,8 +85,8 @@ logs or a Git commit. Use the hosting platform's encrypted secret store.
 
 1. Select an exact Git commit.
 2. Confirm the worktree is clean.
-3. Run `npm ci`, `npm run lint`, `npm test`, `npm run test:e2e` and the API
-   integration suite against the candidate.
+3. Run `npm ci`, `npm run lint`, `npm test`, `npm run test:integration` and
+   `npm run test:e2e` against the candidate.
 4. Record every skipped test. A skipped real-device check is not a pass.
 
 ### 2. Provision State
@@ -106,12 +132,15 @@ tested commit and record its deployment identifier.
 ### 6. Verify Before Opening Traffic
 
 Run the complete smoke test in `AGENT_DEPLOYMENT.md` with two accounts and two
-clients. Include authentication, avatar persistence, private rooms, QR joining,
+clients. Include authentication, avatar persistence, private rooms, invite-code joining,
 matchmaking, ranked settlement, spectators, direct/world chat, reconnect,
-departure adjudication, replay, both AI services and mobile layouts.
+  departure adjudication, replay, both AI services, rank-season visibility and
+  mobile layouts. Confirm that a closing season rejects new queue entries while
+  allowing its already active matches to settle.
 
 Repeat the matrix in `MOBILE_QA.md` on real Android and iPhone browsers,
-including WeChat. Camera scanning must be tested over the final HTTPS origin.
+including WeChat. Verify invitation-code entry with the on-screen keyboard and
+clipboard paste; QR room joining has been removed from the product.
 
 ### 7. Cut Over Gradually
 

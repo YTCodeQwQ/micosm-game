@@ -5,7 +5,9 @@ import { permissionsForRole, roleHasPermission } from "../lib/admin.ts";
 
 test("administrator roles expose only their intended capabilities", () => {
   assert.equal(roleHasPermission("super_admin", "roles.write"), true);
+  assert.equal(roleHasPermission("super_admin", "ranking.seasons.write"), true);
   assert.equal(roleHasPermission("admin", "roles.write"), false);
+  assert.equal(roleHasPermission("admin", "ranking.seasons.write"), false);
   assert.equal(roleHasPermission("moderator", "reports.write"), true);
   assert.equal(roleHasPermission("moderator", "ranking.write"), false);
   assert.equal(roleHasPermission("support", "users.sessions"), true);

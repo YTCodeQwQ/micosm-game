@@ -4,6 +4,8 @@ import { cleanChatMessage, WORLD_RETENTION_MS } from "../../../lib/chat";
 import { ensureAppSchema } from "../../../lib/database-migrations";
 import { friendPair } from "../../../lib/friends";
 import { activeSanction } from "../../../lib/moderation";
+import { featureEnabled, featureUnavailable } from "../../../lib/operations";
+import { createNotification } from "../../../lib/notifications";
 import { notifyPlatform } from "../../../lib/platform-realtime";
 import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
@@ -148,6 +150,8 @@ export async function POST(request: Request) {
     }
 
     if (payload.type !== "send" || !payload.channel) return Response.json({ error: { code: "invalid_request", message: "无法识别这个聊天操作" } }, { status: 400 });
+    if (payload.channel === "world" && !await featureEnabled(d1, "world_chat_writable")) return featureUnavailable("世界频道当前为只读状态", "world_chat_read_only");
+    if (payload.channel === "world" && await featureEnabled(d1, "maintenance_mode")) return featureUnavailable("平台维护期间世界频道暂时只读", "maintenance_mode");
     if (sanction.muted) return Response.json({ error: { code: "chat_muted", message: "你暂时无法发送消息" }, mutedUntil: sanction.mutedUntil }, { status: 403 });
     const sendLimit = await consumeRateLimit(d1, {
       scope: payload.channel === "world" ? "chat_world" : "chat_direct",
@@ -183,6 +187,10 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     await d1.prepare("INSERT INTO chat_messages (id, channel, hall, sender_id, recipient_id, body, room_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(id, payload.channel, hall, user.id, targetId || null, body, roomId, now).run();
+    if (payload.channel === "direct") {
+      await createNotification(d1, { userId: targetId, kind: "direct_message", title: `${user.displayName} 发来私信`, message: body || "发送了一个房间邀请。", actorUserId: user.id, entityType: "direct_chat", entityId: user.id, dedupeKey: `direct-message:${id}` });
+      await notifyPlatform({ type: "notifications_updated", userIds: [targetId] });
+    }
     await d1.prepare("DELETE FROM chat_messages WHERE channel = 'world' AND created_at < ?").bind(now - WORLD_RETENTION_MS).run();
     await notifyPlatform({ type: "chat_updated", channel: payload.channel, hall, userIds: payload.channel === "direct" ? [user.id, targetId] : undefined });
     return Response.json({ sent: true, id });

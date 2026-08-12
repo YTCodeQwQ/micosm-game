@@ -22,6 +22,7 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
   await mockSignedInApi(page);
   await page.goto("/");
   await expect(page.locator("#mobile-play-title")).toBeVisible();
+  await expect(page.locator(".auth-backdrop")).toBeHidden();
   await expectNoHorizontalOverflow(page);
   await expect(page).toHaveScreenshot("home.png", { fullPage: true });
 

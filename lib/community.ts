@@ -68,6 +68,15 @@ export function cleanCommentBody(value: unknown) {
   return cleanMultiline(value, 500);
 }
 
+export function extractDiscussionMentions(value: string, limit = 10) {
+  const tokens = new Set<string>();
+  for (const match of value.matchAll(/(?<![\p{L}\p{N}_.-])@([^\s@，。！？、,.!?:：;；]{1,24})/gu)) {
+    tokens.add(match[1]);
+    if (tokens.size >= limit) break;
+  }
+  return [...tokens];
+}
+
 export function discussionCategory(value: unknown): DiscussionCategory {
   return typeof value === "string" && (DISCUSSION_CATEGORIES as readonly string[]).includes(value) ? value as DiscussionCategory : "general";
 }

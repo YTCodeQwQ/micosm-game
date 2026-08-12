@@ -1,6 +1,5 @@
 const SESSION_COOKIE = "micosm_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
-const TEMPORARY_INVITE_CODE = "abcd123";
 const PASSWORD_ITERATIONS = 210_000;
 
 export type AuthUser = {
@@ -63,10 +62,6 @@ export function normalizePhone(value: unknown) {
   let phone = value.replace(/\D/g, "");
   if (phone.length === 13 && phone.startsWith("86")) phone = phone.slice(2);
   return /^1[3-9]\d{9}$/.test(phone) ? phone : "";
-}
-
-export function inviteCodeIsValid(value: unknown) {
-  return typeof value === "string" && value.trim().toLowerCase() === TEMPORARY_INVITE_CODE;
 }
 
 export function passwordIsValid(value: unknown): value is string {

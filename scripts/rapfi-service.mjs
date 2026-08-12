@@ -3,25 +3,18 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { availableParallelism } from "node:os";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configuredProjectPath, defaultRapfiExecutable } from "./runtime-paths.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-function configuredPath(value, fallback) {
-  const selected = value?.trim() || fallback;
-  return isAbsolute(selected) ? selected : resolve(root, selected);
-}
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.round(parsed))) : fallback;
 }
 
-const defaultExecutable = process.platform === "win32"
-  ? ".tools/rapfi/engine/pbrain-rapfi-windows-avx2.exe"
-  : ".tools/rapfi/engine/pbrain-rapfi-linux-clang-avx2";
-const executable = configuredPath(process.env.RAPFI_EXE, defaultExecutable);
+const executable = configuredProjectPath(root, process.env.RAPFI_EXE, defaultRapfiExecutable());
 const port = boundedInteger(process.env.RAPFI_SERVICE_PORT, 3211, 1, 65535);
 const host = process.env.RAPFI_SERVICE_HOST?.trim() || "127.0.0.1";
 const serviceToken = process.env.RAPFI_SERVICE_TOKEN?.trim() || process.env.AI_SERVICE_TOKEN?.trim() || "";

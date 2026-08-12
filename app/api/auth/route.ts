@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
 import { getD1 } from "../../../db";
 import { configuredAdminIds, resolveConfiguredAdmin } from "../../../lib/admin";
-import { authUserFromRow, cleanDisplayName, clearSessionCookie, createPassword, createSession, deleteSession, getSessionUser, inviteCodeIsValid, maskedPhone, normalizePhone, normalizeUsernameKey, passwordIsValid, publicUserIdForInternalId, verifyPassword, type AuthUser, type AuthUserRow } from "../../../lib/auth";
+import { authUserFromRow, cleanDisplayName, clearSessionCookie, createPassword, createSession, deleteSession, getSessionUser, maskedPhone, normalizePhone, normalizeUsernameKey, passwordIsValid, publicUserIdForInternalId, verifyPassword, type AuthUser, type AuthUserRow } from "../../../lib/auth";
+import { releaseBetaInvite, reserveBetaInvite } from "../../../lib/beta";
 import { ensureAppSchema } from "../../../lib/database-migrations";
 import { activeSanction } from "../../../lib/moderation";
+import { featureEnabled, featureUnavailable } from "../../../lib/operations";
 import { clientAddress, consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 function publicUser(user: AuthUser) {
@@ -51,28 +53,36 @@ export async function POST(request: Request) {
     if (!phoneLimit.allowed) return rateLimitResponse(phoneLimit, "这个手机号尝试得太频繁了，请稍后再试");
 
     if (payload.type === "register") {
+      if (!await featureEnabled(d1, "registration_enabled")) return featureUnavailable("新用户注册暂时关闭，请稍后再试", "registration_closed");
+      if (await featureEnabled(d1, "maintenance_mode")) return featureUnavailable("平台正在维护，暂时不能注册新账号", "maintenance_mode");
       const displayName = cleanDisplayName(payload.displayName);
       if (!displayName) return Response.json({ error: { code: "invalid_name", message: "请输入用户名" } }, { status: 400 });
-      if (!inviteCodeIsValid(payload.inviteCode)) return Response.json({ error: { code: "invalid_invite", message: "邀请码不正确" } }, { status: 403 });
       const usernameKey = normalizeUsernameKey(displayName);
       const nameOwner = await d1.prepare(`SELECT ${userSelect} FROM users WHERE username_key = ?`).bind(usernameKey).first<AuthUserRow>();
       const phoneOwner = await d1.prepare(`SELECT ${userSelect} FROM users WHERE phone = ?`).bind(phone).first<AuthUserRow>();
       if (nameOwner && nameOwner.id !== phoneOwner?.id) return Response.json({ error: { code: "username_taken", message: "这个用户名已经被使用" } }, { status: 409 });
       if (phoneOwner?.password_hash) return Response.json({ error: { code: "phone_taken", message: "这个手机号已经注册，请直接登录" } }, { status: 409 });
 
-      const password = await createPassword(payload.password);
-      const now = Date.now();
+      const userId = phoneOwner?.id ?? crypto.randomUUID();
+      const reservation = await reserveBetaInvite(d1, payload.inviteCode, userId);
+      if (!reservation.ok) return Response.json({ error: { code: reservation.code, message: reservation.message } }, { status: 403 });
       let row: AuthUserRow;
-      if (phoneOwner) {
-        await d1.prepare("UPDATE users SET display_name = ?, username_key = ?, password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?")
-          .bind(displayName, usernameKey, password.hash, password.salt, now, phoneOwner.id).run();
-        row = { ...phoneOwner, display_name: displayName, username_key: usernameKey, password_hash: password.hash, password_salt: password.salt };
-      } else {
-        const id = crypto.randomUUID();
-        const publicId = await publicUserIdForInternalId(id);
-        await d1.prepare("INSERT INTO users (id, public_id, phone, display_name, username_key, password_hash, password_salt, signature, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)")
-          .bind(id, publicId, phone, displayName, usernameKey, password.hash, password.salt, now, now).run();
-        row = { id, public_id: publicId, phone, display_name: displayName, username_key: usernameKey, password_hash: password.hash, password_salt: password.salt, signature: "", avatar_key: null, role: "player" };
+      try {
+        const password = await createPassword(payload.password);
+        const now = Date.now();
+        if (phoneOwner) {
+          await d1.prepare("UPDATE users SET display_name = ?, username_key = ?, password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?")
+            .bind(displayName, usernameKey, password.hash, password.salt, now, phoneOwner.id).run();
+          row = { ...phoneOwner, display_name: displayName, username_key: usernameKey, password_hash: password.hash, password_salt: password.salt };
+        } else {
+          const publicId = await publicUserIdForInternalId(userId);
+          await d1.prepare("INSERT INTO users (id, public_id, phone, display_name, username_key, password_hash, password_salt, signature, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)")
+            .bind(userId, publicId, phone, displayName, usernameKey, password.hash, password.salt, now, now).run();
+          row = { id: userId, public_id: publicId, phone, display_name: displayName, username_key: usernameKey, password_hash: password.hash, password_salt: password.salt, signature: "", avatar_key: null, role: "player" };
+        }
+      } catch (error) {
+        await releaseBetaInvite(d1, reservation);
+        throw error;
       }
       const cookie = await createSession(d1, row.id, request.url);
       const user = await resolvedUser(d1, authUserFromRow(row));

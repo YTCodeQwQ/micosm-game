@@ -5,14 +5,16 @@ Last reviewed: 2026-08-11
 ## Current State
 
 - Accounts use a unique username, phone number and password.
-- Registration currently accepts the temporary shared invite `abcd123`.
+- Registration currently validates managed beta invites stored in D1. The
+  seeded compatibility code `ABCD123` can be disabled from `/admin`.
 - The SMS fields are deliberately disabled placeholders.
 - Password changes exist for signed-in users.
 - Password recovery by phone is not implemented.
 
-The temporary invite must never remain as a source-code constant in a public
-release. This document defines the replacement contract for the deployment or
-authentication agent after the owner supplies SMS credentials.
+Managed invites must remain server-side and must not be replaced by a
+source-code constant in a public release. This document defines the SMS
+integration contract for the deployment or authentication agent after the
+owner supplies provider credentials.
 
 ## Target Registration Policy
 
@@ -28,9 +30,10 @@ REGISTRATION_INVITE_MODE=required|optional|off
   beta access but does not block registration.
 - `off`: a verified phone is sufficient. This is the expected public setting.
 
-Do not replace `abcd123` with another literal in `lib/auth.ts`. When invites are
-enabled, store randomly generated invite hashes in D1 with usage limits,
-expiration, creator and revocation state. Return the clear invite only once.
+Do not replace managed invites with another literal in application code. The
+existing D1 invite table already tracks usage limits, expiration, creator,
+enable state and claims. During SMS cutover, preserve that management UI and
+make its requirement depend on the registration policy.
 
 If the owner chooses to launch without SMS during a private beta, use
 `required` mode with a secret stored in the platform secret manager. This is a
@@ -110,8 +113,8 @@ Add versioned migrations for:
   metadata.
 - `phone_verification_tickets`: token hash, phone, purpose, expiry and consumed
   time.
-- `registration_invites`: code hash, mode/label, creator, expiry, maximum uses,
-  use count and revoked time.
+- Preserve and extend the existing `beta_invites` and `beta_invite_claims`
+  tables rather than creating a second invitation system.
 - `user_phone_verifications`: user, phone, verified time and provider label.
 
 Keep phone numbers out of application logs and moderation exports.

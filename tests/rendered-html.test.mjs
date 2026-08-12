@@ -98,17 +98,19 @@ test("keeps security, moderation, realtime, and operations hardening wired", asy
   assert.match(worker, /\/api\/platform-realtime/);
   assert.match(platformHub, /presence_updated/);
   assert.match(health, /app_schema_migrations/);
-  assert.match(operations, /backup-r2\.ps1/);
+  assert.match(operations, /npm run ops:backup:r2/);
+  assert.match(operations, /--confirm-restore/);
 });
 
 test("keeps standard boards, profiles, friends, and room multiplayer behavior in source", async () => {
-  const [page, layout, route, engine, authRoute, auth, profileRoute, avatarRoute, friendsRoute, friends, chatRoute, chat, styles] = await Promise.all([
+  const [page, layout, route, engine, authRoute, auth, beta, profileRoute, avatarRoute, friendsRoute, friends, chatRoute, chat, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/match/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/match-engine.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/auth/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/beta.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/profile/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/avatar/[key]/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/friends/route.ts", import.meta.url), "utf8"),
@@ -234,7 +236,9 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(authRoute, /type === "register"/);
   assert.match(authRoute, /type === "signIn"/);
   assert.match(authRoute, /type === "signOut"/);
-  assert.match(auth, /abcd123/);
+  assert.match(authRoute, /reserveBetaInvite/);
+  assert.match(beta, /ABCD123/);
+  assert.match(beta, /beta_invite_claims/);
   assert.match(auth, /HttpOnly/);
   assert.match(auth, /SHA-256/);
   assert.match(auth, /PBKDF2/);
@@ -316,14 +320,16 @@ test("keeps standard boards, profiles, friends, and room multiplayer behavior in
   assert.match(layout, /micosm-logo\.png/);
 });
 
-test("keeps ranked play separate, persistent, and game-specific", async () => {
-  const [page, matchRoute, rankRoute, rank, schema, migration] = await Promise.all([
+test("keeps ranked play separate, persistent, game-specific, and season-managed", async () => {
+  const [page, matchRoute, rankRoute, rank, schema, migration, seasonRoute, seasonAdmin] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/match/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/rank/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/rank.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0007_classy_kang.sql", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/ranking/seasons/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/AdminRankSeasons.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(rank, /尘星.*微光.*星轨.*月环.*曜辰.*星穹.*天幕.*无垠/);
@@ -338,6 +344,8 @@ test("keeps ranked play separate, persistent, and game-specific", async () => {
   assert.match(matchRoute, /turnSeconds/);
   assert.match(matchRoute, /invalid_clock/);
   assert.match(matchRoute, /RANK_SETTLEMENT_STALE_MS/);
+  assert.match(matchRoute, /rankSeasonForGame/);
+  assert.match(matchRoute, /q\.season_id = \?/);
   assert.match(matchRoute, /await d1\.batch\(\[/);
   assert.match(matchRoute, /status = 'settling' AND settled_at = \?/);
   assert.match(rankRoute, /rank_profiles/);
@@ -345,8 +353,18 @@ test("keeps ranked play separate, persistent, and game-specific", async () => {
   assert.match(schema, /rankProfiles/);
   assert.match(schema, /rankedQueue/);
   assert.match(schema, /rankMatches/);
+  assert.match(schema, /rankSeasons/);
+  assert.match(schema, /rankSeasonStandings/);
+  assert.match(rank, /rank_seasons_one_current_idx/);
+  assert.match(rank, /status === "closing"/);
+  assert.match(seasonRoute, /ranking\.seasons\.write/);
+  assert.match(seasonRoute, /ROW_NUMBER\(\) OVER/);
+  assert.match(seasonRoute, /active_match_count/);
+  assert.match(seasonAdmin, /新建赛季/);
+  assert.match(seasonAdmin, /停止本赛季报名/);
+  assert.match(seasonAdmin, /封存赛季榜单/);
   assert.match(migration, /CREATE TABLE `rank_profiles`/);
-  assert.match(page, /开始\{game === "go" \? "围棋" : "五子棋"\}排位/);
+  assert.match(page, /开始\$\{game === "go" \? "围棋" : "五子棋"\}排位/);
   assert.match(page, /黑白棋不参与排位/);
   assert.match(page, /排位对局不能悔棋/);
   assert.match(page, /对方超时，你获胜了/);
@@ -356,13 +374,10 @@ test("keeps ranked play separate, persistent, and game-specific", async () => {
   assert.match(page, /每手用时（秒）/);
   assert.match(page, /requestRematch/);
   assert.match(page, /对方拒绝了你的悔棋请求/);
-  assert.match(page, /roomQrDataUrl/);
-  assert.match(page, /扫描房间二维码/);
-  assert.match(page, /BrowserQRCodeReader/);
-  assert.match(page, /searchParams\.get\("room"\)/);
-  assert.match(page, /拍照识别/);
-  assert.match(page, /VITE_LAN_ORIGIN/);
+  assert.match(page, /输入 6 位邀请码/);
+  assert.doesNotMatch(page, /扫描房间二维码|roomQrDataUrl|BrowserQRCodeReader|拍照识别/);
   assert.match(page, /返回排位/);
+  assert.match(page, /rank-season-banner/);
   assert.match(page, /RANK_EMBLEMS.*dust-star.*faint-glow.*star-track.*moon-ring.*radiant-star.*star-vault.*sky-veil.*boundless/s);
   assert.match(page, /RANK_MOTTO/);
   assert.match(page, /RankEmblemArt/);

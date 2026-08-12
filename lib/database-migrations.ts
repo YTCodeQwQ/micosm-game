@@ -6,9 +6,13 @@ import { ensureFriendSchema } from "./friends";
 import { ensureMatchDiagnosticsSchema } from "./match-diagnostics";
 import { ensureMatchHistorySchema } from "./match-history";
 import { ensureModerationSchema } from "./moderation";
+import { ensureOperationsSchema } from "./operations";
+import { ensureNotificationSchema } from "./notifications";
+import { ensurePolicySchema } from "./policies";
 import { ensureRankSchema } from "./rank";
 import { ensureRateLimitSchema } from "./rate-limit";
 import { ensureSavedGameSchema } from "./saved-games";
+import { ensureBetaSchema } from "./beta";
 
 type AppStatement = {
   bind(...values: unknown[]): AppStatement;
@@ -113,6 +117,25 @@ async function migrate(d1: AppD1) {
 
   await ensureCommunitySchema(d1);
   await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (5, 'community_and_announcements', ?)").bind(Date.now()).run();
+
+  await ensureRankSchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (6, 'admin_game_operations', ?)").bind(Date.now()).run();
+
+  await ensurePolicySchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (7, 'versioned_policies', ?)").bind(Date.now()).run();
+
+  await ensureOperationsSchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (8, 'operations_console', ?)").bind(Date.now()).run();
+
+  await ensureNotificationSchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (9, 'persistent_notifications', ?)").bind(Date.now()).run();
+
+  await ensureRankSchema(d1);
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (10, 'managed_rank_seasons', ?)").bind(Date.now()).run();
+
+  await ensureBetaSchema(d1);
+  await d1.prepare("UPDATE rank_seasons SET name = '星海内测季', summary = '当前为内测赛季，排位数据可能在正式上线前重置。', updated_at = ? WHERE code = 'S0' AND name = '公测赛季'").bind(Date.now()).run();
+  await d1.prepare("INSERT OR IGNORE INTO app_schema_migrations (version, name, applied_at) VALUES (11, 'beta_program_and_feedback', ?)").bind(Date.now()).run();
 
   await d1.prepare("PRAGMA optimize").run();
 }

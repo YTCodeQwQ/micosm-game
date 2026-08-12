@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 
-type RealtimeUser = { id: string; role: "player" | "admin" } | null;
+type RealtimeUser = { id: string; role: "player" | "super_admin" | "admin" | "moderator" | "support" | "operator" } | null;
 
 export function usePlatformRealtime(user: RealtimeUser) {
   const [friendsRevision, setFriendsRevision] = useState(0);
   const [chatRevision, setChatRevision] = useState(0);
   const [communityRevision, setCommunityRevision] = useState(0);
   const [lobbyRevision, setLobbyRevision] = useState(0);
+  const [notificationRevision, setNotificationRevision] = useState(0);
   const userId = user?.id;
   const role = user?.role;
 
@@ -36,7 +37,8 @@ export function usePlatformRealtime(user: RealtimeUser) {
           if (update.type === "chat_updated") setChatRevision((value) => value + 1);
           if (update.type === "community_updated") setCommunityRevision((value) => value + 1);
           if (update.type === "lobby_updated") setLobbyRevision((value) => value + 1);
-          if (update.type === "moderation_updated" && role === "admin") setChatRevision((value) => value + 1);
+          if (update.type === "notifications_updated") setNotificationRevision((value) => value + 1);
+          if (update.type === "moderation_updated" && role !== "player") setChatRevision((value) => value + 1);
           if (update.type === "account_restricted") window.location.reload();
         } catch {
           // Ignore non-JSON heartbeat responses from older workers.
@@ -58,5 +60,5 @@ export function usePlatformRealtime(user: RealtimeUser) {
     };
   }, [role, userId]);
 
-  return { friendsRevision, chatRevision, communityRevision, lobbyRevision };
+  return { friendsRevision, chatRevision, communityRevision, lobbyRevision, notificationRevision };
 }

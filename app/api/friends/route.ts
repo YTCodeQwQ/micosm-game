@@ -3,6 +3,7 @@ import { avatarUrlForKey, getSessionUser, normalizeUsernameKey } from "../../../
 import { ensureAppSchema } from "../../../lib/database-migrations";
 import { friendPair, GAME_INVITE_TTL_MS, ONLINE_WINDOW_MS } from "../../../lib/friends";
 import { notifyPlatform } from "../../../lib/platform-realtime";
+import { createNotification } from "../../../lib/notifications";
 import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 type PersonRow = {
@@ -151,7 +152,9 @@ export async function POST(request: Request) {
       if (!invite || invite.invitee_id !== user.id || invite.status !== "pending" || invite.expires_at <= now) return Response.json({ error: { code: "invite_expired", message: "这个对局邀请已经失效" } }, { status: 409 });
       if (!payload.accept) {
         await d1.prepare("UPDATE game_invites SET status = 'declined', updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, invite.id).run();
+        await createNotification(d1, { userId: invite.inviter_id, kind: "invite_declined", title: "对局邀请被拒绝", message: `${user.displayName} 拒绝了你的对局邀请。`, actorUserId: user.id, entityType: "game_invite", entityId: invite.id, dedupeKey: `invite-declined:${invite.id}` });
         await notifyPlatform({ type: "friends_updated", userIds: [user.id, invite.inviter_id] });
+        await notifyPlatform({ type: "notifications_updated", userIds: [invite.inviter_id] });
         return Response.json({ declined: true });
       }
       const room = await d1.prepare("SELECT id FROM game_rooms WHERE id = ? AND mode = 'private' AND white_player IS NULL").bind(invite.room_id).first<{ id: string }>();
@@ -173,18 +176,26 @@ export async function POST(request: Request) {
       if (relation?.status === "accepted") return Response.json({ accepted: true });
       if (relation?.status === "pending" && relation.requested_by !== user.id) {
         await d1.prepare("UPDATE friendships SET status = 'accepted', updated_at = ? WHERE user_low = ? AND user_high = ?").bind(now, low, high).run();
+        await createNotification(d1, { userId: targetId, kind: "friend_accepted", title: "好友申请已通过", message: `${user.displayName} 已成为你的好友。`, actorUserId: user.id, entityType: "user", entityId: user.id, dedupeKey: `friend-accepted:${low}:${high}` });
         await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
+        await notifyPlatform({ type: "notifications_updated", userIds: [targetId] });
         return Response.json({ accepted: true });
       }
       await d1.prepare("INSERT INTO friendships (user_low, user_high, requested_by, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?) ON CONFLICT(user_low, user_high) DO UPDATE SET requested_by = excluded.requested_by, status = 'pending', updated_at = excluded.updated_at")
         .bind(low, high, user.id, now, now).run();
+      await createNotification(d1, { userId: targetId, kind: "friend_request", title: "新的好友申请", message: `${user.displayName} 想添加你为好友。`, actorUserId: user.id, entityType: "user", entityId: user.id, dedupeKey: `friend-request:${low}:${high}:${now}` });
       await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
+      await notifyPlatform({ type: "notifications_updated", userIds: [targetId] });
       return Response.json({ requested: true });
     }
 
     if (payload.type === "acceptRequest" || payload.type === "rejectRequest") {
       if (!relation || relation.status !== "pending" || relation.requested_by === user.id) return Response.json({ error: { code: "request_unavailable", message: "好友申请已经失效" } }, { status: 409 });
-      if (payload.type === "acceptRequest") await d1.prepare("UPDATE friendships SET status = 'accepted', updated_at = ? WHERE user_low = ? AND user_high = ?").bind(now, low, high).run();
+      if (payload.type === "acceptRequest") {
+        await d1.prepare("UPDATE friendships SET status = 'accepted', updated_at = ? WHERE user_low = ? AND user_high = ?").bind(now, low, high).run();
+        await createNotification(d1, { userId: targetId, kind: "friend_accepted", title: "好友申请已通过", message: `${user.displayName} 已成为你的好友。`, actorUserId: user.id, entityType: "user", entityId: user.id, dedupeKey: `friend-accepted:${low}:${high}` });
+        await notifyPlatform({ type: "notifications_updated", userIds: [targetId] });
+      }
       else await d1.prepare("DELETE FROM friendships WHERE user_low = ? AND user_high = ?").bind(low, high).run();
       await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
       return Response.json({ accepted: payload.type === "acceptRequest" });
@@ -229,7 +240,9 @@ export async function POST(request: Request) {
       const inviteId = crypto.randomUUID();
       await d1.prepare("INSERT INTO game_invites (id, inviter_id, invitee_id, room_id, game, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
         .bind(inviteId, user.id, targetId, room.id, room.game, now + GAME_INVITE_TTL_MS, now, now).run();
+      await createNotification(d1, { userId: targetId, kind: "game_invite", title: "好友邀请你对局", message: `${user.displayName} 邀请你加入${room.game === "go" ? "围棋" : room.game === "gomoku" ? "五子棋" : "黑白棋"}房间。`, actorUserId: user.id, entityType: "game_invite", entityId: inviteId, dedupeKey: `game-invite:${inviteId}` });
       await notifyPlatform({ type: "friends_updated", userIds: [user.id, targetId] });
+      await notifyPlatform({ type: "notifications_updated", userIds: [targetId] });
       return Response.json({ invited: true, inviteId });
     }
 

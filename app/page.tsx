@@ -22,6 +22,7 @@ import {
   Copy,
   Download,
   FileUp,
+  FlaskConical,
   Gamepad2,
   Flag,
   Globe2,
@@ -32,6 +33,7 @@ import {
   LogOut,
   Moon,
   MessageCircle,
+  MessageSquareWarning,
   Maximize2,
   Minimize2,
   MoreHorizontal,
@@ -39,11 +41,9 @@ import {
   Pencil,
   Play,
   Plus,
-  QrCode,
   RotateCcw,
   Search,
   Save,
-  ScanLine,
   Send,
   Settings2,
   ShieldAlert,
@@ -65,18 +65,21 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { activateMatch, applyMatchAction, createMatchState, scoreGoPosition, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchState as RemoteMatchState, type SpectatorPolicy } from "../lib/match-engine";
+import { activateMatch, applyMatchAction, createMatchState, projectMatchClock, scoreGoPosition, type AiDifficulty, type ColorPreference, type MatchAction, type MatchClockMode, type MatchGame, type MatchState as RemoteMatchState, type SpectatorPolicy } from "../lib/match-engine";
 import { createMicosmGameFile, gameRecordFilename, MAX_GAME_FILE_BYTES, MICOSM_GAME_FILE_MIME, parseMicosmGameFile, type MicosmGameFile } from "../lib/game-record";
 import { RANK_NAMES, rankLabel } from "../lib/rank";
 import { STORY_SEASON_ONE, STORY_SEASON_TITLE } from "../lib/story-season-one";
 import { ModerationPanel } from "../components/ModerationPanel";
 import { CommunityCenter } from "../components/CommunityCenter";
+import { PolicyCenter } from "../components/PolicyCenter";
 import { usePlatformRealtime } from "../hooks/usePlatformRealtime";
 import { useMobileApp } from "../hooks/useMobileApp";
 
 const STORY_MODE_ENABLED = false;
 
 type GameId = "gomoku" | "go" | "reversi";
+type BetaInfo = { betaMode: boolean; feedbackEnabled: boolean; programName: string; notice: string; season: { name: string; code: string } | null };
+type PlayerFeedback = { id: string; category: string; categoryLabel: string; title: string; body: string; status: string; adminNote: string; createdAt: number; updatedAt: number };
 type Player = "black" | "white";
 type Stone = Player | null;
 type Point = [number, number];
@@ -127,7 +130,17 @@ type GamePreferences = {
   showLastMove: boolean;
   confirmRestart: boolean;
 };
-type AppNotification = { id: number; message: string };
+type AppNotification = {
+  id: string;
+  kind: string;
+  title: string;
+  message: string;
+  entityType: string | null;
+  entityId: string | null;
+  readAt: number | null;
+  createdAt: number;
+  actor: { id: string; displayName: string; avatarUrl: string | null } | null;
+};
 type FriendPerson = PlayerProfile & { id: string; publicId: string; displayName: string; online: boolean };
 type FriendSearchResult = FriendPerson & { relationship: "none" | "friend" | "incoming" | "outgoing" | "blocked" | "blocked_by_other" };
 type GameInvite = FriendPerson & { inviteId: string; roomId: string; game: GameId; expiresAt: number };
@@ -187,7 +200,8 @@ type RankProfile = {
   progress: { current: number; required: number };
 };
 type RankLeaderboardEntry = { position: number; userId: string; publicId: string; displayName: string; signature: string; avatarUrl: string | null; rating: number; label: string; wins: number; losses: number; matches: number; isMe: boolean };
-type RankData = { profiles: Record<RankGame, RankProfile>; position: number | null; leaderboard: RankLeaderboardEntry[] };
+type RankSeason = { id: string; code: string; name: string; summary: string; status: "draft" | "active" | "closing" | "closed"; startsAt: number; endsAt: number; goEnabled: boolean; gomokuEnabled: boolean; carryPercent: number; activatedAt: number | null; closedAt: number | null };
+type RankData = { season: RankSeason | null; seasonPlayable: boolean; seasonReason: string; profiles: Record<RankGame, RankProfile>; position: number | null; leaderboard: RankLeaderboardEntry[] };
 type HistoryRecord = {
   id: string;
   roomId: string;
@@ -345,72 +359,6 @@ function formatMatchClock(milliseconds: number) {
   const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function roomCodeFromScan(value: string) {
-  let candidate = value.trim().toUpperCase();
-  try {
-    candidate = new URL(value).searchParams.get("room")?.trim().toUpperCase() ?? candidate;
-  } catch {
-    // Raw six-character invitation codes are accepted too.
-  }
-  return /^[A-HJ-NP-Z2-9]{6}$/.test(candidate) ? candidate : "";
-}
-
-async function qrPhotoCanvas(file: File) {
-  const maxEdge = 2560;
-  let source: CanvasImageSource;
-  let width = 0;
-  let height = 0;
-  let release: (() => void) | undefined;
-
-  try {
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    source = bitmap;
-    width = bitmap.width;
-    height = bitmap.height;
-    release = () => bitmap.close();
-  } catch {
-    const objectUrl = URL.createObjectURL(file);
-    const image = new window.Image();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error("照片加载失败"));
-        image.src = objectUrl;
-      });
-      source = image;
-      width = image.naturalWidth;
-      height = image.naturalHeight;
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
-  }
-
-  if (!width || !height) {
-    release?.();
-    throw new Error("无法读取照片尺寸，请重新拍摄二维码");
-  }
-
-  const scale = Math.min(1, maxEdge / Math.max(width, height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
-  const context = canvas.getContext("2d", { alpha: false });
-  if (!context) {
-    release?.();
-    throw new Error("当前浏览器无法处理照片，请改用邀请码");
-  }
-  context.drawImage(source, 0, 0, canvas.width, canvas.height);
-  release?.();
-  return canvas;
-}
-
-function qrScanErrorMessage(error: unknown) {
-  const message = error instanceof Error ? String(error.message ?? "") : String(error ?? "");
-  if (message.includes("照片") || message.includes("浏览器")) return message;
-  if (message.includes("Dimensions")) return "照片还没有加载完成，请重新拍摄二维码";
-  return "没有识别到有效的房间二维码，请对准二维码后重新拍摄";
 }
 
 function otherPlayer(player: Player): Player {
@@ -693,6 +641,7 @@ export default function HomePage() {
   const [aiRetryNonce, setAiRetryNonce] = useState(0);
   const [aiEngineStatus, setAiEngineStatus] = useState<{ ready: boolean; detail?: string } | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [policyCenterOpen, setPolicyCenterOpen] = useState(false);
   const [profileName, setProfileName] = useState("");
   const [profileSignature, setProfileSignature] = useState("");
   const [profileAvatar, setProfileAvatar] = useState<File | null>(null);
@@ -701,16 +650,21 @@ export default function HomePage() {
   const [profileCurrentPassword, setProfileCurrentPassword] = useState("");
   const [profileNewPassword, setProfileNewPassword] = useState("");
   const [joinCode, setJoinCode] = useState("");
-  const [scannedRoomCode, setScannedRoomCode] = useState("");
-  const [roomInviteUrl, setRoomInviteUrl] = useState("");
-  const [roomQrDataUrl, setRoomQrDataUrl] = useState("");
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [scannerError, setScannerError] = useState("");
-  const [scannerImageBusy, setScannerImageBusy] = useState(false);
+  const [betaInfo, setBetaInfo] = useState<BetaInfo | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackItems, setFeedbackItems] = useState<PlayerFeedback[]>([]);
+  const [feedbackCategory, setFeedbackCategory] = useState("bug");
+  const [feedbackTitle, setFeedbackTitle] = useState("");
+  const [feedbackBody, setFeedbackBody] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [roomBusy, setRoomBusy] = useState(false);
   const [colorPreference, setColorPreference] = useState<ColorPreference>("black");
   const [privateClockEnabled, setPrivateClockEnabled] = useState(false);
+  const [privateClockMode, setPrivateClockMode] = useState<MatchClockMode>("per_move");
   const [privateTurnSeconds, setPrivateTurnSeconds] = useState(60);
+  const [privateTotalMinutes, setPrivateTotalMinutes] = useState(20);
+  const [privateByoYomiSeconds, setPrivateByoYomiSeconds] = useState(30);
+  const [privateByoYomiPeriods, setPrivateByoYomiPeriods] = useState(3);
   const [privateForbiddenEnabled, setPrivateForbiddenEnabled] = useState(false);
   const [privateSpectatorPolicy, setPrivateSpectatorPolicy] = useState<SpectatorPolicy>("off");
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -721,6 +675,7 @@ export default function HomePage() {
   const [boardFeedback, setBoardFeedback] = useState<"move" | "invalid" | null>(null);
   const [pendingMove, setPendingMove] = useState<Point | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationUnread, setNotificationUnread] = useState(0);
   const [preferences, setPreferences] = useState<GamePreferences>(defaultPreferences);
   const [outcome, setOutcome] = useState<MatchOutcome | null>(null);
   const [review, setReview] = useState<MatchReview | null>(null);
@@ -731,11 +686,7 @@ export default function HomePage() {
   const previousUndoRequest = useRef<RemoteMatchState["undoRequest"]>(null);
   const previousRematchRequest = useRef<RemoteMatchState["rematchRequest"]>(null);
   const timeoutProbe = useRef("");
-  const scannedJoinAttempt = useRef("");
-  const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
-  const scannerCaptureRef = useRef<HTMLInputElement | null>(null);
   const gameRecordImportRef = useRef<HTMLInputElement | null>(null);
-  const scannerControls = useRef<{ stop: () => void } | null>(null);
   const aiRequest = useRef("");
   const announcedAiPass = useRef("");
   const seenGameInvites = useRef(new Set<string>());
@@ -753,7 +704,7 @@ export default function HomePage() {
   const [reversiBoard, setReversiBoard] = useState(makeReversiBoard);
 
   const currentRoomId = room?.id;
-  const { friendsRevision, chatRevision, communityRevision, lobbyRevision } = usePlatformRealtime(authUser ? { id: authUser.id, role: authUser.role } : null);
+  const { friendsRevision, chatRevision, communityRevision, lobbyRevision, notificationRevision } = usePlatformRealtime(authUser ? { id: authUser.id, role: authUser.role } : null);
   const { dismissInstallGuide, installGuide, installMobileApp, isFullscreen, isStandalone, toggleBrowserFullscreen } = useMobileApp(showToast);
 
   useEffect(() => {
@@ -832,150 +783,14 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const code = new URL(window.location.href).searchParams.get("room")?.trim().toUpperCase() ?? "";
-      if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) return;
-      setJoinCode(code);
-      setScannedRoomCode(code);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!room || room.mode !== "private" || room.opponentReady) return;
     let disposed = false;
-    const inviteUrl = new URL(window.location.href);
-    const lanOrigin = import.meta.env.VITE_LAN_ORIGIN?.trim();
-    if (lanOrigin && ["localhost", "127.0.0.1"].includes(inviteUrl.hostname)) {
-      const localNetworkUrl = new URL(lanOrigin);
-      inviteUrl.protocol = localNetworkUrl.protocol;
-      inviteUrl.host = localNetworkUrl.host;
-    }
-    inviteUrl.search = "";
-    inviteUrl.hash = "";
-    inviteUrl.searchParams.set("room", room.id);
-    void import("qrcode")
-      .then(({ toDataURL }) => {
-        if (!disposed) setRoomInviteUrl(inviteUrl.toString());
-        return toDataURL(inviteUrl.toString(), {
-          width: 480,
-          margin: 4,
-          errorCorrectionLevel: "H",
-          color: { dark: "#000000", light: "#ffffff" },
-        });
-      })
-      .then((dataUrl) => { if (!disposed) setRoomQrDataUrl(dataUrl); })
-      .catch(() => { if (!disposed) setRoomQrDataUrl(""); });
+    void fetch("/api/beta", { cache: "no-store" }).then(async (response) => {
+      if (!response.ok) return;
+      const data = await response.json() as BetaInfo;
+      if (!disposed) setBetaInfo(data);
+    }).catch(() => undefined);
     return () => { disposed = true; };
-  }, [room]);
-
-  useEffect(() => {
-    if (!authReady || !authUser || !scannedRoomCode) return;
-    if (room?.id === scannedRoomCode) {
-      const timer = window.setTimeout(() => {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("room");
-        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-        setScannedRoomCode("");
-      }, 0);
-      return () => window.clearTimeout(timer);
-    }
-    if (room || scannedJoinAttempt.current === scannedRoomCode) return;
-    scannedJoinAttempt.current = scannedRoomCode;
-    let disposed = false;
-    let requestStarted = false;
-    let requestTimeout = 0;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      requestStarted = true;
-      setRoomBusy(true);
-      requestTimeout = window.setTimeout(() => controller.abort(), 10_000);
-      void fetch("/api/match", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "join", roomId: scannedRoomCode }),
-        signal: controller.signal,
-      }).then(async (response) => {
-        const data = await response.json() as { room?: RoomView; playerId?: string; error?: { message?: string } };
-        if (!response.ok || !data.room || !data.playerId) throw new Error(data.error?.message ?? "扫码加入房间失败");
-        if (disposed) return;
-        setRoom(data.room);
-        setPlayerId(data.playerId);
-        setActiveGame(data.room.game);
-        setMainView("games");
-        if (data.room.game === "go") setGoSize(data.room.state.size);
-        setConnectionState("online");
-        window.sessionStorage.setItem("micosm-room", JSON.stringify({ roomId: data.room.id, playerId: data.playerId }));
-        const url = new URL(window.location.href);
-        url.searchParams.delete("room");
-        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-        setScannedRoomCode("");
-        setJoinCode("");
-      }).catch((error) => {
-        if (disposed) return;
-        toastSequence.current += 1;
-        const timedOut = error instanceof DOMException && error.name === "AbortError";
-        const message = timedOut ? "加入房间超时，请确认双方在同一局域网后重试" : error instanceof Error ? error.message : "扫码加入房间失败";
-        setToast({ id: toastSequence.current, message, tone: "warning" });
-        scannedJoinAttempt.current = "";
-        setScannedRoomCode("");
-      }).finally(() => {
-        window.clearTimeout(requestTimeout);
-        if (!disposed) setRoomBusy(false);
-      });
-    }, 0);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-      window.clearTimeout(requestTimeout);
-      controller.abort();
-      if (requestStarted) setRoomBusy(false);
-    };
-  }, [authReady, authUser, room, scannedRoomCode]);
-
-  useEffect(() => {
-    if (!scannerOpen) return;
-    let disposed = false;
-    const timer = window.setTimeout(() => {
-      void import("@zxing/browser").then(async ({ BrowserQRCodeReader }) => {
-        const video = scannerVideoRef.current;
-        if (!video || disposed) return;
-        const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 180, delayBetweenScanSuccess: 700 });
-        const controls = await reader.decodeFromConstraints(
-          { audio: false, video: { facingMode: { ideal: "environment" } } },
-          video,
-          (result, _error, scanControls) => {
-            if (!result || disposed) return;
-            const code = roomCodeFromScan(result.getText());
-            if (!code) {
-              setScannerError("没有识别到有效的 Micosm 房间二维码");
-              return;
-            }
-            scanControls.stop();
-            scannerControls.current = null;
-            scannedJoinAttempt.current = "";
-            setJoinCode(code);
-            setScannedRoomCode(code);
-            setScannerOpen(false);
-            setScannerError("");
-          },
-        );
-        if (disposed) controls.stop();
-        else scannerControls.current = controls;
-      }).catch((error) => {
-        if (disposed) return;
-        const insecure = !window.isSecureContext;
-        const denied = error instanceof DOMException && error.name === "NotAllowedError";
-        setScannerError(insecure ? "摄像头扫码需要 HTTPS 安全连接" : denied ? "摄像头权限被拒绝，请在浏览器设置中允许后重试" : "无法启动摄像头，请检查权限或改用邀请码");
-      });
-    }, 0);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-      scannerControls.current?.stop();
-      scannerControls.current = null;
-    };
-  }, [scannerOpen]);
+  }, []);
 
   useEffect(() => {
     if (!authUser) return;
@@ -1000,6 +815,27 @@ export default function HomePage() {
     const timer = window.setInterval(pollFriends, 45_000);
     return () => { disposed = true; window.clearInterval(timer); };
   }, [authUser, friendsRevision]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    let disposed = false;
+    const loadNotifications = async () => {
+      try {
+        const response = await fetch("/api/notifications", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { notifications: AppNotification[]; unread: number };
+        if (!disposed) {
+          setNotifications(data.notifications);
+          setNotificationUnread(data.unread);
+        }
+      } catch {
+        // Realtime updates and the next recovery poll will retry automatically.
+      }
+    };
+    void loadNotifications();
+    const timer = window.setInterval(loadNotifications, 60_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [authUser, notificationRevision]);
 
   useEffect(() => {
     if (!authUser || mainView !== "ranked") return;
@@ -1308,7 +1144,6 @@ export default function HomePage() {
       toastSequence.current += 1;
       const message = "对方拒绝了你的悔棋请求。";
       setToast({ id: toastSequence.current, message, tone: "warning" });
-      setNotifications((items) => [{ id: toastSequence.current, message }, ...items].slice(0, 12));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [room?.id, room?.role, room?.state.notice, room?.state.undoRequest, room?.version]);
@@ -1370,8 +1205,10 @@ export default function HomePage() {
       }
       else if (outcome) return;
       else if (aiSetupOpen) setAiSetupOpen(false);
+      else if (policyCenterOpen) setPolicyCenterOpen(false);
       else if (settingsOpen) setSettingsOpen(false);
       else if (profileOpen) setProfileOpen(false);
+      else if (feedbackOpen) setFeedbackOpen(false);
       else if (chatOpen) setChatOpen(false);
       else if (notificationOpen) setNotificationOpen(false);
       else if (friendPanelOpen) setFriendPanelOpen(false);
@@ -1381,7 +1218,7 @@ export default function HomePage() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [accountOpen, aiSetupOpen, chatOpen, confirmIntent, friendConfirm, friendPanelOpen, libraryMenuOpen, moderationOpen, notificationOpen, outcome, profileOpen, review, settingsOpen]);
+  }, [accountOpen, aiSetupOpen, chatOpen, confirmIntent, feedbackOpen, friendConfirm, friendPanelOpen, libraryMenuOpen, moderationOpen, notificationOpen, outcome, policyCenterOpen, profileOpen, review, settingsOpen]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1439,21 +1276,26 @@ export default function HomePage() {
   const visibleGomokuBoard = reviewFrame && activeGame === "gomoku" ? reviewFrame.board : remoteState?.game === "gomoku" ? remoteState.board : gomokuBoard;
   const visibleReversiBoard = reviewFrame && activeGame === "reversi" ? reviewFrame.board : remoteState?.game === "reversi" ? remoteState.board : reversiBoard;
   const visibleTurn = reviewFrame?.turn ?? remoteState?.turn ?? "black";
+  const projectedClockState = remoteState?.clock ? projectMatchClock(remoteState, clockNow) : remoteState;
   const liveClock = (color: Player) => {
-    const clock = remoteState?.clock;
+    const clock = projectedClockState?.clock;
     if (!clock) return undefined;
-    const base = color === "black" ? clock.blackMs : clock.whiteMs;
-    const elapsed = remoteState.status === "playing" && remoteState.turn === color && clock.activeSince
-      ? Math.max(0, clockNow - clock.activeSince)
-      : 0;
-    return Math.max(0, base - elapsed);
+    return color === "black" ? clock.blackMs : clock.whiteMs;
   };
   const blackClockMs = liveClock("black");
   const whiteClockMs = liveClock("white");
+  const clockCaption = (color: Player) => {
+    const clock = projectedClockState?.clock;
+    const config = projectedClockState?.clockConfig;
+    if (!clock || config?.mode !== "byoyomi") return undefined;
+    const inByoyomi = color === "black" ? clock.blackInByoyomi : clock.whiteInByoyomi;
+    const periods = color === "black" ? clock.blackPeriods : clock.whitePeriods;
+    return inByoyomi ? `读秒 · ${periods ?? config.periods ?? 0} 次` : "主时间";
+  };
   useEffect(() => {
     if (!room || room.state.status !== "playing" || !room.state.clock || !playerId) return;
     const activeRemaining = room.state.turn === "black" ? blackClockMs : whiteClockMs;
-    if (activeRemaining === undefined || activeRemaining > 0) return;
+    if (projectedClockState?.status !== "ended" && (activeRemaining === undefined || activeRemaining > 0)) return;
     const key = `${room.id}-${room.version}-${room.state.turn}`;
     if (timeoutProbe.current === key) return;
     timeoutProbe.current = key;
@@ -1461,16 +1303,60 @@ export default function HomePage() {
       .then(async (response) => response.ok ? await response.json() as { room: RoomView } : null)
       .then((data) => { if (data?.room) setRoom(data.room); })
       .catch(() => undefined);
-  }, [blackClockMs, playerId, room, whiteClockMs]);
+  }, [blackClockMs, playerId, projectedClockState?.status, room, whiteClockMs]);
   const reversiScore = useMemo(() => stoneScore(visibleReversiBoard), [visibleReversiBoard]);
   function showToast(message: string, requestedTone?: ToastTone) {
     toastSequence.current += 1;
     const tone = requestedTone
       ?? (/禁手|非法|无法|不能|不可|失败|错误|超时|请先|拒绝|连接|轮到|等待另一位/.test(message) ? "warning"
         : /成功|已匹配|已发送|已复制|已保存|已添加|已接受|获胜/.test(message) ? "success" : "info");
-    const notification = { id: toastSequence.current, message };
-    setToast({ id: notification.id, message, tone });
-    setNotifications((current) => [notification, ...current].slice(0, 12));
+    setToast({ id: toastSequence.current, message, tone });
+  }
+
+  async function notificationCommand(type: "markRead" | "markAllRead" | "deleteAll", id?: string) {
+    try {
+      const response = await fetch("/api/notifications", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type, id }) });
+      if (!response.ok) throw new Error("通知操作失败");
+      if (type === "deleteAll") {
+        setNotifications([]);
+        setNotificationUnread(0);
+      } else {
+        const now = Date.now();
+        setNotifications((items) => items.map((item) => !item.readAt && (type === "markAllRead" || item.id === id) ? { ...item, readAt: now } : item));
+        setNotificationUnread((value) => type === "markAllRead" ? 0 : Math.max(0, value - 1));
+      }
+    } catch {
+      showToast("通知状态暂时无法同步", "warning");
+    }
+  }
+
+  function toggleNotifications() {
+    const opening = !notificationOpen;
+    setNotificationOpen(opening);
+    setChatOpen(false);
+    setAccountOpen(false);
+    setLibraryMenuOpen(false);
+    if (opening && notificationUnread > 0) void notificationCommand("markAllRead");
+  }
+
+  function openNotification(item: AppNotification) {
+    if (!item.readAt) void notificationCommand("markRead", item.id);
+    setNotificationOpen(false);
+    if (item.kind === "friend_request" || item.kind === "friend_accepted" || item.kind === "game_invite") {
+      setFriendPanelOpen(true);
+      return;
+    }
+    if (item.kind === "direct_message" && item.actor) {
+      const friend = friendsData.friends.find((candidate) => candidate.id === item.actor?.id);
+      if (friend) openChat("direct", friend);
+      else setFriendPanelOpen(true);
+      return;
+    }
+    if (item.kind === "community_reply") {
+      openCommunity("discussion");
+      return;
+    }
+    if (item.kind === "match_result") openHistoryView();
   }
 
   async function refreshRankData(game: RankGame = rankedGame) {
@@ -2131,7 +2017,19 @@ export default function HomePage() {
       const response = await fetch("/api/match", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "create", game: activeGame, size: activeGame === "go" ? goSize : undefined, colorPreference: activeGame === "go" || activeGame === "gomoku" ? colorPreference : "black", turnSeconds: privateClockEnabled ? privateTurnSeconds : undefined, forbiddenMoves: activeGame === "gomoku" ? privateForbiddenEnabled : undefined, spectatorPolicy: privateSpectatorPolicy }),
+        body: JSON.stringify({
+          type: "create",
+          game: activeGame,
+          size: activeGame === "go" ? goSize : undefined,
+          colorPreference: activeGame === "go" || activeGame === "gomoku" ? colorPreference : "black",
+          clockMode: privateClockEnabled ? (privateClockMode === "byoyomi" && activeGame !== "go" ? "per_move" : privateClockMode) : undefined,
+          turnSeconds: privateClockEnabled && (privateClockMode === "per_move" || (privateClockMode === "byoyomi" && activeGame !== "go")) ? privateTurnSeconds : undefined,
+          totalMinutes: privateClockEnabled && ["total", "byoyomi"].includes(privateClockMode) ? privateTotalMinutes : undefined,
+          byoYomiSeconds: privateClockEnabled && privateClockMode === "byoyomi" && activeGame === "go" ? privateByoYomiSeconds : undefined,
+          byoYomiPeriods: privateClockEnabled && privateClockMode === "byoyomi" && activeGame === "go" ? privateByoYomiPeriods : undefined,
+          forbiddenMoves: activeGame === "gomoku" ? privateForbiddenEnabled : undefined,
+          spectatorPolicy: privateSpectatorPolicy,
+        }),
       });
       const data = await response.json() as { room?: RoomView; playerId?: string; error?: { message?: string } };
       if (!response.ok || !data.room || !data.playerId) throw new Error(data.error?.message ?? "创建房间失败");
@@ -2383,47 +2281,39 @@ export default function HomePage() {
     }
   }
 
-  async function copyInviteLink() {
-    if (!roomInviteUrl) return showToast("邀请链接正在生成");
+  async function openFeedback() {
+    setAccountOpen(false);
+    setFeedbackOpen(true);
+    if (!authUser) return;
+    setFeedbackBusy(true);
     try {
-      await navigator.clipboard.writeText(roomInviteUrl);
-      showToast("房间链接已复制");
-    } catch {
-      showToast(roomInviteUrl);
-    }
-  }
-
-  async function scanQrImage(file: File | undefined) {
-    if (!file || scannerImageBusy) return;
-    setScannerImageBusy(true);
-    setScannerError("");
-    try {
-      const { BrowserQRCodeReader } = await import("@zxing/browser");
-      const canvas = await qrPhotoCanvas(file);
-      const result = new BrowserQRCodeReader().decodeFromCanvas(canvas);
-      const code = roomCodeFromScan(result.getText());
-      if (!code) throw new Error("没有识别到有效的 Micosm 房间二维码");
-      scannerControls.current?.stop();
-      scannerControls.current = null;
-      scannedJoinAttempt.current = "";
-      setJoinCode(code);
-      setScannedRoomCode(code);
-      setScannerOpen(false);
+      const response = await fetch("/api/feedback", { cache: "no-store" });
+      const data = await response.json() as { feedback?: PlayerFeedback[]; error?: { message?: string } };
+      if (!response.ok) throw new Error(data.error?.message ?? "读取反馈记录失败");
+      setFeedbackItems(data.feedback ?? []);
     } catch (error) {
-      setScannerOpen(true);
-      setScannerError(qrScanErrorMessage(error));
+      showToast(error instanceof Error ? error.message : "读取反馈记录失败", "warning");
     } finally {
-      setScannerImageBusy(false);
+      setFeedbackBusy(false);
     }
   }
 
-  function openRoomScanner() {
-    setScannerError("");
-    if (!window.isSecureContext) {
-      scannerCaptureRef.current?.click();
-      return;
+  async function submitFeedback() {
+    if (!authUser || feedbackBusy) return;
+    setFeedbackBusy(true);
+    try {
+      const response = await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: feedbackCategory, title: feedbackTitle, body: feedbackBody, pageContext: `${mainView}${room ? ` · ${room.game} · ${room.mode}` : ""}` }) });
+      const data = await response.json() as { feedback?: PlayerFeedback; error?: { message?: string } };
+      if (!response.ok || !data.feedback) throw new Error(data.error?.message ?? "提交反馈失败");
+      setFeedbackItems((items) => [data.feedback!, ...items]);
+      setFeedbackTitle("");
+      setFeedbackBody("");
+      showToast("反馈已经送达，感谢你帮我们打磨内测版", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "提交反馈失败", "warning");
+    } finally {
+      setFeedbackBusy(false);
     }
-    setScannerOpen(true);
   }
 
   function changeGoSize(size: number) {
@@ -2613,7 +2503,8 @@ export default function HomePage() {
       <header className="glass topbar">
         <div className="brand">
           <span className="brand-icon"><Image src="/micosm-logo.webp" alt="" width={34} height={34} priority unoptimized /></span>
-          <div><strong>Micosm Game</strong><small>Board & Logic</small></div>
+          <div><strong>Micosm Game</strong><small>{betaInfo?.betaMode ? "Board & Logic · 内测" : "Board & Logic"}</small></div>
+          {betaInfo?.betaMode && <span className="beta-header-badge">BETA</span>}
         </div>
         <nav className="main-nav" aria-label="主导航">
           <button className={mainView === "games" ? "active" : ""} onClick={() => { setCommunityLiveOpen(false); setMainView("games"); }} type="button"><Play size={17} fill={mainView === "games" ? "currentColor" : "none"} />游戏</button>
@@ -2631,8 +2522,8 @@ export default function HomePage() {
             {friendBadge > 0 && <b>{Math.min(friendBadge, 9)}</b>}
           </span>
           <span className="notification-trigger">
-            <IconButton label="通知" onClick={() => { setNotificationOpen((open) => !open); setChatOpen(false); setAccountOpen(false); setLibraryMenuOpen(false); }}><Bell size={18} /></IconButton>
-            {notifications.length > 0 && <b>{Math.min(notifications.length, 9)}</b>}
+            <IconButton label="通知" onClick={toggleNotifications}><Bell size={18} /></IconButton>
+            {notificationUnread > 0 && <b>{Math.min(notificationUnread, 9)}</b>}
           </span>
           <IconButton label={preferences.appearance === "dark" ? "切换明亮外观" : "切换夜间外观"} onClick={() => updatePreference("appearance", preferences.appearance === "dark" ? "light" : "dark")}>{preferences.appearance === "dark" ? <Sun size={18} /> : <Moon size={18} />}</IconButton>
           <span className="mobile-display-trigger"><IconButton label={isFullscreen ? "退出全屏" : "进入全屏"} onClick={() => void toggleBrowserFullscreen()}>{isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</IconButton></span>
@@ -2722,11 +2613,11 @@ export default function HomePage() {
 
       {notificationOpen && (
         <aside aria-label="通知中心" className="notification-popover">
-          <header><div><small>NOTIFICATIONS</small><strong>通知</strong></div>{notifications.length > 0 && <button aria-label="清空通知" onClick={() => setNotifications([])} title="清空通知" type="button"><Trash2 size={16} /></button>}</header>
+          <header><div><small>NOTIFICATIONS</small><strong>通知中心</strong></div>{notifications.length > 0 && <button aria-label="清空通知" onClick={() => void notificationCommand("deleteAll")} title="清空通知" type="button"><Trash2 size={16} /></button>}</header>
           {notifications.length === 0 ? (
-            <div className="notification-empty"><Bell size={20} /><span>暂无新通知</span></div>
+            <div className="notification-empty"><Bell size={20} /><span>还没有通知</span></div>
           ) : (
-            <div className="notification-list">{notifications.map((item) => <div key={item.id}><span><Check size={13} /></span><p>{item.message}</p></div>)}</div>
+            <div className="notification-list">{notifications.map((item) => <button className={item.readAt ? "" : "unread"} key={item.id} onClick={() => openNotification(item)} type="button"><span>{item.actor?.avatarUrl ? <Image alt="" height={30} src={item.actor.avatarUrl} unoptimized width={30} /> : item.kind === "match_result" ? <Trophy size={14} /> : item.kind === "community_reply" || item.kind === "direct_message" ? <MessageCircle size={14} /> : item.kind.includes("friend") || item.kind.includes("invite") ? <Users size={14} /> : <Bell size={14} />}</span><p><strong>{item.title}</strong><small>{item.message}</small><time>{new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></p></button>)}</div>
           )}
         </aside>
       )}
@@ -2743,6 +2634,8 @@ export default function HomePage() {
             <button onClick={openProfileEditor} type="button"><Pencil size={16} />编辑个人资料</button>
             <button onClick={openHistoryView} type="button"><Clock3 size={16} />对局记录</button>
             <button onClick={openSettings} type="button"><Settings2 size={16} />游戏设置</button>
+            {(betaInfo?.betaMode || betaInfo?.feedbackEnabled) && <button onClick={() => void openFeedback()} type="button"><MessageSquareWarning size={16} />内测反馈</button>}
+            <button onClick={() => { setPolicyCenterOpen(true); setAccountOpen(false); }} type="button"><BookOpen size={16} />协议与规则</button>
             {authUser.role !== "player" && <button onClick={() => { window.location.assign("/admin"); setAccountOpen(false); }} type="button"><ShieldAlert size={16} />管理后台</button>}
             <button className="mobile-app-action" onClick={() => void toggleBrowserFullscreen()} type="button">{isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{isFullscreen ? "退出浏览器全屏" : "进入浏览器全屏"}</button>
             <button className="mobile-app-action" disabled={isStandalone} onClick={() => void installMobileApp()} type="button">{isStandalone ? <Check size={16} /> : <Download size={16} />}{isStandalone ? "已从手机桌面启动" : "添加到手机桌面"}</button>
@@ -2824,14 +2717,14 @@ export default function HomePage() {
           </div>
 
           {remoteState?.clock && (
-            <div className="rank-clock-strip" aria-label="本手倒计时">
+            <div className="rank-clock-strip" aria-label="对局计时">
               <div className={remoteState.status === "playing" && visibleTurn === "black" ? "is-active" : ""}>
                 <span className="mini-stone black" /><b>{room?.role === "black" ? "我 · 黑方" : room?.players.black ?? "黑方"}</b>
-                <time className={(blackClockMs ?? 0) <= 60_000 ? "is-low" : ""}>{formatMatchClock(blackClockMs ?? remoteState.clock.blackMs)}</time>
+                <time className={(blackClockMs ?? 0) <= 60_000 ? "is-low" : ""}>{formatMatchClock(blackClockMs ?? remoteState.clock.blackMs)}{clockCaption("black") && <small>{clockCaption("black")}</small>}</time>
               </div>
               <Clock3 size={15} aria-hidden="true" />
               <div className={remoteState.status === "playing" && visibleTurn === "white" ? "is-active" : ""}>
-                <time className={(whiteClockMs ?? 0) <= 60_000 ? "is-low" : ""}>{formatMatchClock(whiteClockMs ?? remoteState.clock.whiteMs)}</time>
+                <time className={(whiteClockMs ?? 0) <= 60_000 ? "is-low" : ""}>{formatMatchClock(whiteClockMs ?? remoteState.clock.whiteMs)}{clockCaption("white") && <small>{clockCaption("white")}</small>}</time>
                 <b>{room?.role === "white" ? "我 · 白方" : room?.players.white ?? "白方"}</b><span className="mini-stone white" />
               </div>
             </div>
@@ -2839,9 +2732,9 @@ export default function HomePage() {
 
           {room && (
             <div className="mobile-match-players" aria-label="双方玩家">
-              <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "black"} clockMs={blackClockMs} color="black" isMe={room.role === "black"} name={room.players.black} profile={room.profiles?.black} />
+              <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "black"} clockCaption={clockCaption("black")} clockMs={blackClockMs} color="black" isMe={room.role === "black"} name={room.players.black} profile={room.profiles?.black} />
               <span className="mobile-versus">VS</span>
-              <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "white"} clockMs={whiteClockMs} color="white" isMe={room.role === "white"} name={room.players.white} profile={room.profiles?.white} />
+              <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "white"} clockCaption={clockCaption("white")} clockMs={whiteClockMs} color="white" isMe={room.role === "white"} name={room.players.white} profile={room.profiles?.white} />
             </div>
           )}
 
@@ -2936,23 +2829,17 @@ export default function HomePage() {
             )}
 
             {room && !room.opponentReady && (
-              <div className={`waiting-room ${room.mode === "private" ? "has-qr" : ""}`} role="status">
+              <div className="waiting-room" role="status">
                 <LoaderCircle className="spin" size={24} />
                 <h3>{room.mode === "ranked" ? "正在匹配实力相近的对手" : room.mode === "matchmaking" ? "正在匹配对手" : "等待好友加入"}</h3>
                 <p>{room.mode === "ranked" ? `${activeGame === "go" ? "19 路围棋" : "15 路五子棋"} · 随机执色 · 匹配范围会逐步扩大` : room.mode === "matchmaking" ? "同游戏与同棋盘尺寸 · 随机执色" : "把下面的 6 位邀请码发给好友"}</p>
                 {room.mode !== "private" ? (
                   <button disabled={roomBusy} onClick={cancelMatchmaking} type="button"><X size={16} />取消匹配</button>
                 ) : (
-                  <div className="waiting-room-invite">
-                    <div className="room-qr-code" data-invite-url={roomInviteUrl}>
-                      {roomQrDataUrl ? <Image alt={`加入房间 ${room.id} 的二维码`} height={280} src={roomQrDataUrl} unoptimized width={280} /> : <LoaderCircle className="spin" size={24} />}
-                      <span><QrCode size={13} />手机扫码加入</span>
-                    </div>
-                    <div className="room-invite-copy">
-                      <small>房间邀请码</small>
-                      <button onClick={copyInviteCode} type="button"><Copy size={16} />{room.id}</button>
-                      <button className="copy-room-link" onClick={copyInviteLink} type="button"><Waypoints size={15} />复制房间链接</button>
-                    </div>
+                  <div className="room-invite-copy">
+                    <small>房间邀请码</small>
+                    <button onClick={copyInviteCode} type="button"><Copy size={16} />{room.id}</button>
+                    <p>好友在“加入房间”中输入这 6 位邀请码即可进入。</p>
                   </div>
                 )}
               </div>
@@ -3012,8 +2899,8 @@ export default function HomePage() {
           </section>
 
           <section className="match-players" aria-label="对局玩家">
-            <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "black"} clockMs={blackClockMs} color="black" isMe={room?.role === "black"} name={room?.players.black} profile={room?.profiles?.black} />
-            <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "white"} clockMs={whiteClockMs} color="white" isMe={room?.role === "white"} name={room?.players.white} profile={room?.profiles?.white} />
+            <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "black"} clockCaption={clockCaption("black")} clockMs={blackClockMs} color="black" isMe={room?.role === "black"} name={room?.players.black} profile={room?.profiles?.black} />
+            <MatchPlayerCard active={remoteState?.status === "playing" && visibleTurn === "white"} clockCaption={clockCaption("white")} clockMs={whiteClockMs} color="white" isMe={room?.role === "white"} name={room?.players.white} profile={room?.profiles?.white} />
           </section>
 
           <section className="score-block">
@@ -3046,12 +2933,20 @@ export default function HomePage() {
               goSize={goSize}
               joinCode={joinCode}
               privateClockEnabled={privateClockEnabled}
+              privateClockMode={privateClockMode}
               privateTurnSeconds={privateTurnSeconds}
+              privateTotalMinutes={privateTotalMinutes}
+              privateByoYomiSeconds={privateByoYomiSeconds}
+              privateByoYomiPeriods={privateByoYomiPeriods}
               privateForbiddenEnabled={privateForbiddenEnabled}
               privateSpectatorPolicy={privateSpectatorPolicy}
               onColorChange={setColorPreference}
               onClockEnabledChange={setPrivateClockEnabled}
+              onClockModeChange={setPrivateClockMode}
               onTurnSecondsChange={setPrivateTurnSeconds}
+              onTotalMinutesChange={setPrivateTotalMinutes}
+              onByoYomiSecondsChange={setPrivateByoYomiSeconds}
+              onByoYomiPeriodsChange={setPrivateByoYomiPeriods}
               onForbiddenEnabledChange={setPrivateForbiddenEnabled}
               onSpectatorPolicyChange={setPrivateSpectatorPolicy}
               onCreate={() => void createRoom()}
@@ -3063,7 +2958,6 @@ export default function HomePage() {
               onAnnouncement={() => openCommunity("announcements")}
               onMatch={() => void startMatchmaking()}
               onRanked={openRankedLobby}
-              onScan={openRoomScanner}
               onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
             />
           </div>
@@ -3078,12 +2972,20 @@ export default function HomePage() {
             goSize={goSize}
             joinCode={joinCode}
             privateClockEnabled={privateClockEnabled}
+            privateClockMode={privateClockMode}
             privateTurnSeconds={privateTurnSeconds}
+            privateTotalMinutes={privateTotalMinutes}
+            privateByoYomiSeconds={privateByoYomiSeconds}
+            privateByoYomiPeriods={privateByoYomiPeriods}
             privateForbiddenEnabled={privateForbiddenEnabled}
             privateSpectatorPolicy={privateSpectatorPolicy}
             onColorChange={setColorPreference}
             onClockEnabledChange={setPrivateClockEnabled}
+            onClockModeChange={setPrivateClockMode}
             onTurnSecondsChange={setPrivateTurnSeconds}
+            onTotalMinutesChange={setPrivateTotalMinutes}
+            onByoYomiSecondsChange={setPrivateByoYomiSeconds}
+            onByoYomiPeriodsChange={setPrivateByoYomiPeriods}
             onForbiddenEnabledChange={setPrivateForbiddenEnabled}
             onSpectatorPolicyChange={setPrivateSpectatorPolicy}
             onCreate={() => void createRoom()}
@@ -3095,7 +2997,6 @@ export default function HomePage() {
             onAnnouncement={() => openCommunity("announcements")}
             onMatch={() => void startMatchmaking()}
             onRanked={openRankedLobby}
-            onScan={openRoomScanner}
             onStory={openStoryMode}
             onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
           />
@@ -3266,34 +3167,6 @@ export default function HomePage() {
         </div>
       )}
 
-      <input
-        accept="image/*"
-        capture="environment"
-        className="scanner-capture-input"
-        disabled={scannerImageBusy}
-        onChange={(event) => { void scanQrImage(event.target.files?.[0]); event.target.value = ""; }}
-        ref={scannerCaptureRef}
-        type="file"
-      />
-
-      {scannerOpen && (
-        <div className="scanner-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setScannerOpen(false); }}>
-          <section aria-labelledby="scanner-title" aria-modal="true" className="scanner-dialog" role="dialog">
-            <header><div><span>SCAN ROOM</span><h2 id="scanner-title">扫描房间二维码</h2></div><button aria-label="关闭扫码" onClick={() => setScannerOpen(false)} type="button"><X size={18} /></button></header>
-            <div className="scanner-camera">
-              <video autoPlay muted playsInline ref={scannerVideoRef} />
-              <i aria-hidden="true"><span /></i>
-              {!scannerError && <div><ScanLine size={20} /><span>对准房间二维码</span></div>}
-            </div>
-            {scannerError && <p className="scanner-error"><AlertTriangle size={15} />{scannerError}</p>}
-            <div className="scanner-fallback-actions">
-              <label className="scanner-photo-action"><Camera size={16} />{scannerImageBusy ? "识别中" : "拍照识别"}<input accept="image/*" capture="environment" disabled={scannerImageBusy} onChange={(event) => { void scanQrImage(event.target.files?.[0]); event.target.value = ""; }} type="file" /></label>
-              <button className="scanner-close-action" onClick={() => setScannerOpen(false)} type="button">改用邀请码</button>
-            </div>
-          </section>
-        </div>
-      )}
-
       {profileOpen && authUser && (
         <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setProfileOpen(false); }}>
           <section aria-labelledby="profile-title" aria-modal="true" className="profile-dialog" role="dialog">
@@ -3317,6 +3190,24 @@ export default function HomePage() {
           </section>
         </div>
       )}
+
+      {feedbackOpen && authUser && (
+        <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setFeedbackOpen(false); }}>
+          <section aria-labelledby="feedback-title" aria-modal="true" className="feedback-dialog" role="dialog">
+            <header><div><span>BETA FEEDBACK</span><h2 id="feedback-title">内测反馈</h2></div><button aria-label="关闭反馈" onClick={() => setFeedbackOpen(false)} type="button"><X size={18} /></button></header>
+            {betaInfo?.betaMode && <div className="feedback-beta-note"><FlaskConical size={17} /><div><strong>{betaInfo.programName}</strong><p>{betaInfo.notice}</p></div></div>}
+            <form onSubmit={(event) => { event.preventDefault(); void submitFeedback(); }}>
+              <label><span>反馈类型</span><select onChange={(event) => setFeedbackCategory(event.target.value)} value={feedbackCategory}><option value="bug">问题故障</option><option value="experience">体验建议</option><option value="rules">棋类规则</option><option value="ai">人机对战</option><option value="other">其他反馈</option></select></label>
+              <label><span>简要标题</span><input maxLength={50} onChange={(event) => setFeedbackTitle(event.target.value)} placeholder="例如：五子棋最高难度响应较慢" value={feedbackTitle} /></label>
+              <label><span>具体情况</span><textarea maxLength={1500} onChange={(event) => setFeedbackBody(event.target.value)} placeholder="发生了什么、你当时在做什么、希望怎样改进" rows={5} value={feedbackBody} /><small>{feedbackBody.length}/1500</small></label>
+              <button className="feedback-submit" disabled={!betaInfo?.feedbackEnabled || feedbackBusy || feedbackTitle.trim().length < 2 || feedbackBody.trim().length < 6} type="submit">{feedbackBusy ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}{betaInfo?.feedbackEnabled ? "提交反馈" : "反馈入口暂时关闭"}</button>
+            </form>
+            <section className="feedback-history"><header><strong>我的反馈</strong><span>{feedbackItems.length}</span></header>{feedbackBusy && !feedbackItems.length ? <div className="feedback-loading"><LoaderCircle className="spin" size={18} />正在读取</div> : feedbackItems.length ? feedbackItems.map((item) => <article key={item.id}><header><strong>{item.title}</strong><b className={`feedback-status ${item.status}`}>{item.status === "open" ? "待处理" : item.status === "reviewing" ? "处理中" : item.status === "resolved" ? "已解决" : "已关闭"}</b></header><small>{item.categoryLabel} · {new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>{item.adminNote && <p><MessageSquareWarning size={14} />{item.adminNote}</p>}</article>) : <div className="feedback-empty"><MessageSquareWarning size={20} />还没有提交过反馈</div>}</section>
+          </section>
+        </div>
+      )}
+
+      <PolicyCenter onClose={() => setPolicyCenterOpen(false)} onToast={(message) => showToast(message, "success")} open={policyCenterOpen} />
 
       {moderationOpen && authUser?.role === "admin" && <ModerationPanel onClose={() => setModerationOpen(false)} onNotice={(message) => showToast(message, "success")} />}
 
@@ -3424,12 +3315,12 @@ function UserAvatar({ name, src }: { name: string; src?: string | null }) {
   return <span className="user-avatar">{src ? <Image alt={`${name}的头像`} height={64} src={src} unoptimized width={64} /> : <b>{Array.from(name.trim())[0]?.toUpperCase() ?? "M"}</b>}</span>;
 }
 
-function MatchPlayerCard({ active, clockMs, color, isMe, name, profile }: { active?: boolean; clockMs?: number; color: Player; isMe: boolean; name?: string | null; profile?: PlayerProfile | null }) {
+function MatchPlayerCard({ active, clockCaption, clockMs, color, isMe, name, profile }: { active?: boolean; clockCaption?: string; clockMs?: number; color: Player; isMe: boolean; name?: string | null; profile?: PlayerProfile | null }) {
   const displayName = name ?? "等待对手";
   return (
     <div className={`match-player ${color} ${name ? "ready" : "waiting"} ${active ? "is-active" : ""} ${isMe ? "is-me" : "is-opponent"}`}>
       <UserAvatar name={displayName} src={profile?.avatarUrl} />
-      <div><strong>{displayName}{name && <em>{isMe ? "我" : "对手"}</em>}</strong><p>{profile?.signature || (name ? "未设置个性签名" : "尚未加入对局")}</p>{clockMs !== undefined && <time className={clockMs <= 60_000 ? "is-low" : ""}><Clock3 size={11} />{formatMatchClock(clockMs)}</time>}</div>
+      <div><strong>{displayName}{name && <em>{isMe ? "我" : "对手"}</em>}</strong><p>{profile?.signature || (name ? "未设置个性签名" : "尚未加入对局")}</p>{clockMs !== undefined && <time className={clockMs <= 60_000 ? "is-low" : ""}><Clock3 size={11} />{formatMatchClock(clockMs)}{clockCaption && <small>{clockCaption}</small>}</time>}</div>
       <span>{active && <i />} {color === "black" ? "黑" : "白"}</span>
     </div>
   );
@@ -3459,11 +3350,19 @@ type ClubLobbyProps = {
   goSize: number;
   joinCode: string;
   privateClockEnabled: boolean;
+  privateClockMode: MatchClockMode;
   privateTurnSeconds: number;
+  privateTotalMinutes: number;
+  privateByoYomiSeconds: number;
+  privateByoYomiPeriods: number;
   privateForbiddenEnabled: boolean;
   privateSpectatorPolicy: SpectatorPolicy;
   onClockEnabledChange: (enabled: boolean) => void;
+  onClockModeChange: (mode: MatchClockMode) => void;
   onTurnSecondsChange: (seconds: number) => void;
+  onTotalMinutesChange: (minutes: number) => void;
+  onByoYomiSecondsChange: (seconds: number) => void;
+  onByoYomiPeriodsChange: (periods: number) => void;
   onForbiddenEnabledChange: (enabled: boolean) => void;
   onSpectatorPolicyChange: (policy: SpectatorPolicy) => void;
   onColorChange: (preference: ColorPreference) => void;
@@ -3476,12 +3375,11 @@ type ClubLobbyProps = {
   onAnnouncement: () => void;
   onMatch: () => void;
   onRanked: () => void;
-  onScan: () => void;
   onStory?: () => void;
   onlineFriends: number;
 };
 
-function MobileGameHome({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onStory, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+function MobileGameHome({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onByoYomiPeriodsChange, onByoYomiSecondsChange, onClockEnabledChange, onClockModeChange, onTurnSecondsChange, onTotalMinutesChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onSpectatorPolicyChange, onStory, onlineFriends, privateByoYomiPeriods, privateByoYomiSeconds, privateClockEnabled, privateClockMode, privateTotalMinutes, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
@@ -3538,17 +3436,29 @@ function MobileGameHome({ activeGame, announcement, authUser, busy, colorPrefere
       </button>}
 
       <details className="mobile-room-studio">
-        <summary><span><Users size={19} /></span><div><strong>和好友下一盘</strong><small>创建房间、扫码或输入邀请码</small></div><ChevronDown size={18} /></summary>
+        <summary><span><Users size={19} /></span><div><strong>和好友下一盘</strong><small>创建房间或输入 6 位邀请码</small></div><ChevronDown size={18} /></summary>
         <div className="mobile-room-settings">
           {(activeGame === "go" || activeGame === "gomoku") && <div className="mobile-setting-row"><span>房主执色</span><div>{(["black", "white", "random"] as ColorPreference[]).map((color) => <button className={colorPreference === color ? "active" : ""} key={color} onClick={() => onColorChange(color)} type="button">{color === "black" ? "黑" : color === "white" ? "白" : "随机"}</button>)}</div></div>}
-          <label className="mobile-toggle-row"><span><Clock3 size={16} /><b>每手计时</b><small>{privateClockEnabled ? `${privateTurnSeconds} 秒` : "关闭"}</small></span><input checked={privateClockEnabled} onChange={(event) => onClockEnabledChange(event.target.checked)} type="checkbox" /></label>
-          {privateClockEnabled && <label className="mobile-number-row"><span>每手时间</span><input aria-label="好友房每手用时" inputMode="numeric" max="600" min="5" onChange={(event) => onTurnSecondsChange(Math.min(600, Math.max(5, Number(event.target.value) || 5)))} step="5" type="number" value={privateTurnSeconds} /><b>秒</b></label>}
+          <label className="mobile-toggle-row"><span><Clock3 size={16} /><b>对局计时</b><small>{privateClockEnabled ? privateClockMode === "total" ? `${privateTotalMinutes} 分钟总时限` : privateClockMode === "byoyomi" && activeGame === "go" ? `${privateTotalMinutes} 分钟 + ${privateByoYomiSeconds} 秒读秒` : `${privateTurnSeconds} 秒/手` : "关闭"}</small></span><input checked={privateClockEnabled} onChange={(event) => onClockEnabledChange(event.target.checked)} type="checkbox" /></label>
+          {privateClockEnabled && <>
+            <div className={`mobile-setting-row mobile-clock-mode ${activeGame === "go" ? "is-go" : ""}`}><span>计时规则</span><div>
+              <button className={privateClockMode === "per_move" ? "active" : ""} onClick={() => onClockModeChange("per_move")} type="button">每手</button>
+              <button className={privateClockMode === "total" ? "active" : ""} onClick={() => onClockModeChange("total")} type="button">总时限</button>
+              {activeGame === "go" && <button className={privateClockMode === "byoyomi" ? "active" : ""} onClick={() => onClockModeChange("byoyomi")} type="button">读秒</button>}
+            </div></div>
+            {(privateClockMode === "per_move" || (privateClockMode === "byoyomi" && activeGame !== "go")) && <label className="mobile-number-row"><span>每手时间</span><input aria-label="好友房每手用时" inputMode="numeric" max="600" min="5" onChange={(event) => onTurnSecondsChange(Math.min(600, Math.max(5, Number(event.target.value) || 5)))} step="5" type="number" value={privateTurnSeconds} /><b>秒</b></label>}
+            {privateClockMode === "total" && <label className="mobile-number-row"><span>双方各自总时间</span><input aria-label="好友房总用时" inputMode="numeric" max="180" min="1" onChange={(event) => onTotalMinutesChange(Math.min(180, Math.max(1, Number(event.target.value) || 1)))} type="number" value={privateTotalMinutes} /><b>分钟</b></label>}
+            {privateClockMode === "byoyomi" && activeGame === "go" && <div className="mobile-clock-values">
+              <label><span>主时间</span><input aria-label="围棋主时间" inputMode="numeric" max="180" min="1" onChange={(event) => onTotalMinutesChange(Math.min(180, Math.max(1, Number(event.target.value) || 1)))} type="number" value={privateTotalMinutes} /><b>分</b></label>
+              <label><span>每次读秒</span><input aria-label="围棋每次读秒" inputMode="numeric" max="120" min="10" onChange={(event) => onByoYomiSecondsChange(Math.min(120, Math.max(10, Number(event.target.value) || 10)))} step="5" type="number" value={privateByoYomiSeconds} /><b>秒</b></label>
+              <label><span>读秒次数</span><input aria-label="围棋读秒次数" inputMode="numeric" max="10" min="1" onChange={(event) => onByoYomiPeriodsChange(Math.min(10, Math.max(1, Number(event.target.value) || 1)))} type="number" value={privateByoYomiPeriods} /><b>次</b></label>
+            </div>}
+          </>}
           {activeGame === "gomoku" && <label className="mobile-toggle-row"><span><ShieldCheck size={16} /><b>禁手规则</b><small>三三、四四与长连</small></span><input checked={privateForbiddenEnabled} onChange={(event) => onForbiddenEnabledChange(event.target.checked)} type="checkbox" /></label>}
           <div className="mobile-setting-row"><span>观战权限</span><div>{(["off", "friends", "public"] as SpectatorPolicy[]).map((policy) => <button className={privateSpectatorPolicy === policy ? "active" : ""} key={policy} onClick={() => onSpectatorPolicyChange(policy)} type="button">{policy === "off" ? "关闭" : policy === "friends" ? "好友" : "公开"}</button>)}</div></div>
           <button className="mobile-create-room" disabled={busy || !authUser} onClick={onCreate} type="button"><Plus size={18} />创建{selected.title}房间</button>
           <form className="mobile-join-room" onSubmit={(event) => { event.preventDefault(); onJoin(); }}>
             <input aria-label="邀请码" autoCapitalize="characters" maxLength={6} onChange={(event) => onJoinCodeChange(event.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6))} placeholder="输入 6 位邀请码" spellCheck={false} value={joinCode} />
-            <button aria-label="扫描房间二维码" disabled={busy || !authUser} onClick={onScan} type="button"><ScanLine size={18} /></button>
             <button aria-label="加入房间" disabled={busy || !authUser || joinCode.length !== 6} type="submit"><LogIn size={18} /></button>
           </form>
         </div>
@@ -3557,7 +3467,7 @@ function MobileGameHome({ activeGame, announcement, authUser, busy, colorPrefere
   );
 }
 
-function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onClockEnabledChange, onTurnSecondsChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onScan, onSpectatorPolicyChange, onlineFriends, privateClockEnabled, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onByoYomiPeriodsChange, onByoYomiSecondsChange, onClockEnabledChange, onClockModeChange, onTurnSecondsChange, onTotalMinutesChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onSpectatorPolicyChange, onlineFriends, privateByoYomiPeriods, privateByoYomiSeconds, privateClockEnabled, privateClockMode, privateTotalMinutes, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
@@ -3629,12 +3539,21 @@ function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, 
             <input aria-label="开启好友房计时" checked={privateClockEnabled} onChange={(event) => onClockEnabledChange(event.target.checked)} type="checkbox" />
             <i />
           </label>
-          {privateClockEnabled && (
-            <label className="lobby-clock-minutes">
-              <input aria-label="每手用时（秒）" inputMode="numeric" max="600" min="5" onChange={(event) => onTurnSecondsChange(Math.min(600, Math.max(5, Number(event.target.value) || 5)))} step="5" type="number" value={privateTurnSeconds} />
-              <span>秒/手</span>
-            </label>
-          )}
+          {privateClockEnabled && <small className="lobby-clock-summary">{privateClockMode === "total" ? `${privateTotalMinutes} 分钟` : privateClockMode === "byoyomi" && activeGame === "go" ? `${privateTotalMinutes}分 + ${privateByoYomiSeconds}秒 × ${privateByoYomiPeriods}` : `${privateTurnSeconds} 秒/手`}</small>}
+          {privateClockEnabled && <div className="lobby-clock-options">
+            <div className="lobby-clock-modes">
+              <button className={privateClockMode === "per_move" ? "active" : ""} onClick={() => onClockModeChange("per_move")} type="button">每手</button>
+              <button className={privateClockMode === "total" ? "active" : ""} onClick={() => onClockModeChange("total")} type="button">总时限</button>
+              {activeGame === "go" && <button className={privateClockMode === "byoyomi" ? "active" : ""} onClick={() => onClockModeChange("byoyomi")} type="button">读秒</button>}
+            </div>
+            {(privateClockMode === "per_move" || (privateClockMode === "byoyomi" && activeGame !== "go")) && <label className="lobby-clock-value"><input aria-label="每手用时（秒）" inputMode="numeric" max="600" min="5" onChange={(event) => onTurnSecondsChange(Math.min(600, Math.max(5, Number(event.target.value) || 5)))} step="5" type="number" value={privateTurnSeconds} /><span>秒/手</span></label>}
+            {privateClockMode === "total" && <label className="lobby-clock-value"><input aria-label="双方各自总用时（分钟）" inputMode="numeric" max="180" min="1" onChange={(event) => onTotalMinutesChange(Math.min(180, Math.max(1, Number(event.target.value) || 1)))} type="number" value={privateTotalMinutes} /><span>分钟/方</span></label>}
+            {privateClockMode === "byoyomi" && activeGame === "go" && <div className="lobby-byoyomi-values">
+              <label><input aria-label="围棋主时间（分钟）" inputMode="numeric" max="180" min="1" onChange={(event) => onTotalMinutesChange(Math.min(180, Math.max(1, Number(event.target.value) || 1)))} type="number" value={privateTotalMinutes} /><span>分</span></label>
+              <label><input aria-label="围棋读秒（秒）" inputMode="numeric" max="120" min="10" onChange={(event) => onByoYomiSecondsChange(Math.min(120, Math.max(10, Number(event.target.value) || 10)))} step="5" type="number" value={privateByoYomiSeconds} /><span>秒</span></label>
+              <label><input aria-label="围棋读秒次数" inputMode="numeric" max="10" min="1" onChange={(event) => onByoYomiPeriodsChange(Math.min(10, Math.max(1, Number(event.target.value) || 1)))} type="number" value={privateByoYomiPeriods} /><span>次</span></label>
+            </div>}
+          </div>}
         </div>
         {activeGame === "gomoku" && (
           <div className={`lobby-clock-row lobby-forbidden-row ${privateForbiddenEnabled ? "is-enabled" : ""}`}>
@@ -3658,7 +3577,6 @@ function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, 
           <button disabled={busy || !authUser} onClick={onCreate} type="button"><Plus size={17} />创建房间</button>
           <form onSubmit={(event) => { event.preventDefault(); onJoin(); }}>
             <input aria-label="邀请码" autoCapitalize="characters" maxLength={6} onChange={(event) => onJoinCodeChange(event.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6))} placeholder="输入邀请码" spellCheck={false} value={joinCode} />
-            <button aria-label="扫描房间二维码" disabled={busy || !authUser} onClick={onScan} title="扫描房间二维码" type="button"><ScanLine size={17} /></button>
             <button aria-label="加入房间" disabled={busy || !authUser || joinCode.length !== 6} title="加入房间" type="submit"><LogIn size={17} /></button>
           </form>
         </div>
@@ -4023,6 +3941,8 @@ function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
   const winRate = profile?.matches ? Math.round(profile.wins / profile.matches * 100) : 0;
   const baseWin = [36, 33, 30, 27, 24, 22, 20, 18][tierIndex];
   const leaderboard = data?.leaderboard ?? [];
+  const season = data?.season ?? null;
+  const seasonStatus = !season ? "暂无赛季" : season.status === "active" ? data?.seasonPlayable ? "开放报名" : "尚未开放" : season.status === "closing" ? "停止报名" : season.status === "closed" ? "已封存" : "草稿";
 
   return (
     <div className="ranked-lobby">
@@ -4035,6 +3955,12 @@ function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
           </div>
         </header>
 
+        <div className={`rank-season-banner status-${season?.status ?? "none"}`}>
+          <span><Trophy size={17} /></span>
+          <div><small>{season?.code ?? "SEASON"}</small><strong>{season?.name ?? "等待新赛季"}</strong><p>{season?.summary || data?.seasonReason || "超级管理员尚未开放新的排位赛季。"}</p></div>
+          <time><b>{seasonStatus}</b>{season ? `${new Date(season.startsAt).toLocaleDateString("zh-CN")} - ${new Date(season.endsAt).toLocaleDateString("zh-CN")}` : ""}</time>
+        </div>
+
         <div className="rank-character-scene">
           <ResponsiveArtwork alt="棋社部长藤原澪站在星台邀请玩家参加排位" desktop="/micosm-rank-captain-desktop.webp" mobile="/micosm-rank-captain-mobile.webp" />
           <div><span>第二章 · 星轨试炼</span><strong>“让我看看，你的棋能走到多远。”</strong><small>藤原澪 · 棋社部长</small></div>
@@ -4046,9 +3972,9 @@ function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
           <span>{game === "go" ? "19 路" : "15 路"}</span>
         </div>
 
-        <button className="rank-start" disabled={busy || !profile} onClick={onStart} type="button">
-          {busy ? <LoaderCircle className="spin" size={19} /> : <Search size={19} />}开始{game === "go" ? "围棋" : "五子棋"}排位
-          <span>随机执色</span>
+        <button className="rank-start" disabled={busy || !profile || !data?.seasonPlayable} onClick={onStart} type="button">
+          {busy ? <LoaderCircle className="spin" size={19} /> : data?.seasonPlayable ? <Search size={19} /> : <Clock3 size={19} />}{data?.seasonPlayable ? `开始${game === "go" ? "围棋" : "五子棋"}排位` : data?.seasonReason || "排位暂未开放"}
+          <span>{data?.seasonPlayable ? "随机执色" : seasonStatus}</span>
         </button>
 
         <div className={`rank-emblem tier-${tierIndex}`} aria-label={`当前段位 ${profile?.label ?? "尘星"}`} title={RANK_MOTTO[tierIndex]}>

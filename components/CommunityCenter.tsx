@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Bell, Bookmark, ChevronRight, Clock3, Flag, Flame, Gamepad2, Globe2,
   Heart, LoaderCircle, MessageCircle, Megaphone, PenLine, Pin, Plus, Send, Sparkles,
-  Trash2, Trophy, X,
+  Search, Trash2, Trophy, X,
 } from "lucide-react";
 import type { MicosmGameFile } from "../lib/game-record";
 
@@ -82,6 +82,10 @@ function gameName(game: Attachment["game"]) {
   return game === "go" ? "围棋" : game === "gomoku" ? "五子棋" : "黑白棋";
 }
 
+function mentionText(value: string) {
+  return value.split(/((?<![\p{L}\p{N}_.-])@[^\s@，。！？、,.!?:：;；]{1,24})/gu).map((part, index) => part.startsWith("@") ? <mark key={`${part}-${index}`}>{part}</mark> : part);
+}
+
 function CommunityAvatar({ author }: { author: CommunityAuthor | CommunityUser }) {
   return <span className="community-avatar">{author.avatarUrl ? <Image alt="" fill sizes="44px" src={author.avatarUrl} unoptimized /> : <b>{author.displayName.slice(0, 1).toUpperCase()}</b>}</span>;
 }
@@ -114,6 +118,8 @@ export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCl
   const [category, setCategory] = useState("all");
   const [sort, setSort] = useState<"latest" | "hot">("latest");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [search, setSearch] = useState("");
   const [selectedPost, setSelectedPost] = useState<CommunityPost | null>(null);
   const [comments, setComments] = useState<CommunityComment[]>([]);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -130,10 +136,11 @@ export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCl
   const loadFeed = useCallback(async () => {
     const query = new URLSearchParams({ view: "feed", category, sort });
     if (favoritesOnly) query.set("favorites", "1");
+    if (search) query.set("q", search);
     const data = await requestJson<{ posts: CommunityPost[]; announcements: CommunityAnnouncement[] }>(`/api/community?${query}`);
     setPosts(data.posts);
     setAnnouncements((current) => current.length > data.announcements.length ? current : data.announcements);
-  }, [category, favoritesOnly, sort]);
+  }, [category, favoritesOnly, search, sort]);
 
   const loadAnnouncements = useCallback(async () => {
     const data = await requestJson<{ announcements: CommunityAnnouncement[] }>("/api/community?view=announcements");
@@ -296,7 +303,7 @@ export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCl
               <header className="community-post-author"><CommunityAvatar author={selectedPost.author} /><div><strong>{selectedPost.author.displayName}</strong><small>{selectedPost.author.publicId} · {formatRelativeTime(selectedPost.createdAt)}</small></div>{selectedPost.featured && <i><Sparkles size={13} />精华</i>}</header>
               <div className="community-post-tags"><span>{categoryNames[selectedPost.category]}</span>{selectedPost.pinned && <span><Pin size={12} />置顶</span>}</div>
               <h2>{selectedPost.title}</h2>
-              <div className="community-post-body">{selectedPost.body.split("\n").map((line, index) => <p key={`${line}-${index}`}>{line || <br />}</p>)}</div>
+              <div className="community-post-body">{selectedPost.body.split("\n").map((line, index) => <p key={`${line}-${index}`}>{line ? mentionText(line) : <br />}</p>)}</div>
               {selectedPost.attachment && <GameAttachment attachment={selectedPost.attachment} onOpen={selectedPost.attachment.file ? () => onOpenGame(selectedPost.attachment?.file as MicosmGameFile, selectedPost.id) : undefined} />}
               <footer className="community-post-actions">
                 <button className={selectedPost.liked ? "active" : ""} disabled={busy === `like:${selectedPost.id}`} onClick={() => void react(selectedPost, "like")} type="button"><Heart fill={selectedPost.liked ? "currentColor" : "none"} size={17} />{selectedPost.likes}</button>
@@ -309,13 +316,13 @@ export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCl
               <div className="community-comment-list">
                 {comments.map((comment) => {
                   const parent = comment.parentId ? comments.find((item) => item.id === comment.parentId) : null;
-                  return <article key={comment.id}><CommunityAvatar author={comment.author} /><div><header><strong>{comment.author.displayName}</strong><time>{formatRelativeTime(comment.createdAt)}</time></header>{parent && <small>回复 @{parent.author.displayName}</small>}<p>{comment.body}</p><footer><button onClick={() => setReplyingTo(comment)} type="button">回复</button>{comment.isMine ? <button onClick={() => void remove("deleteComment", comment.id)} type="button">删除</button> : <button onClick={() => void report("comment", comment.id)} type="button">举报</button>}</footer></div></article>;
+                  return <article key={comment.id}><CommunityAvatar author={comment.author} /><div><header><strong>{comment.author.displayName}</strong><time>{formatRelativeTime(comment.createdAt)}</time></header>{parent && <small>回复 @{parent.author.displayName}</small>}<p>{mentionText(comment.body)}</p><footer><button onClick={() => setReplyingTo(comment)} type="button">回复</button>{comment.isMine ? <button onClick={() => void remove("deleteComment", comment.id)} type="button">删除</button> : <button onClick={() => void report("comment", comment.id)} type="button">举报</button>}</footer></div></article>;
                 })}
                 {!comments.length && <div className="community-empty compact"><MessageCircle size={22} /><strong>还没有评论</strong><p>说说你看到的关键一手。</p></div>}
               </div>
               {!selectedPost.locked && <form className="community-comment-composer" onSubmit={(event) => { event.preventDefault(); void submitComment(); }}>
                 {replyingTo && <div><span>回复 {replyingTo.author.displayName}</span><button aria-label="取消回复" onClick={() => setReplyingTo(null)} type="button"><X size={14} /></button></div>}
-                <textarea maxLength={500} onChange={(event) => setCommentBody(event.target.value)} placeholder="认真交流，尊重不同的棋路……" rows={3} value={commentBody} />
+                <textarea maxLength={500} onChange={(event) => setCommentBody(event.target.value)} placeholder="认真交流；输入 @用户名 可以提醒对方……" rows={3} value={commentBody} />
                 <button disabled={busy === "comment" || !commentBody.trim()} type="submit">{busy === "comment" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发表评论</button>
               </form>}
             </section>
@@ -327,18 +334,19 @@ export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCl
           <main className="community-feed">
             {latestAnnouncement && <button className={`community-announcement-strip ${latestAnnouncement.priority}`} onClick={() => setSection("announcements")} type="button"><span><Megaphone size={17} /></span><div><small>{announcementNames[latestAnnouncement.category]}</small><strong>{latestAnnouncement.title}</strong></div><ChevronRight size={17} /></button>}
             <div className="community-feed-toolbar"><div><button className={sort === "latest" ? "active" : ""} onClick={() => setSort("latest")} type="button"><Clock3 size={15} />最新</button><button className={sort === "hot" ? "active" : ""} onClick={() => setSort("hot")} type="button"><Flame size={15} />热门</button><button className={favoritesOnly ? "active" : ""} onClick={() => setFavoritesOnly((value) => !value)} type="button"><Bookmark size={15} />收藏</button></div><button className="community-compose-primary" onClick={() => void openComposer()} type="button"><PenLine size={16} />发布讨论</button></div>
+            <form className="community-feed-search" onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()); }}><Search size={16} /><input aria-label="搜索讨论" maxLength={40} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索标题、正文、棋手或 MG-ID" value={searchDraft} />{search && <button aria-label="清除搜索" onClick={() => { setSearchDraft(""); setSearch(""); }} type="button"><X size={14} /></button>}<button type="submit">搜索</button></form>
             <div className="community-categories" aria-label="帖子分类">{categories.map(([id, label]) => <button className={category === id ? "active" : ""} key={id} onClick={() => setCategory(id)} type="button">{label}</button>)}</div>
             <div className="community-post-list">
               {posts.map((post) => <article className="community-post-card" key={post.id}>
                 <button className="community-post-open" disabled={busy === `post:${post.id}`} onClick={() => void openPost(post.id)} type="button">
                   <header className="community-post-author"><CommunityAvatar author={post.author} /><div><strong>{post.author.displayName}</strong><small>{formatRelativeTime(post.createdAt)} · {categoryNames[post.category]}</small></div>{post.pinned && <i><Pin size={12} />置顶</i>}</header>
-                  <h2>{post.title}</h2><p>{post.body}</p>
+                  <h2>{post.title}</h2><p>{mentionText(post.body)}</p>
                   {post.attachment && <div className="community-post-game-line"><Gamepad2 size={15} /><span>{gameName(post.attachment.game)}棋谱 · {post.attachment.moveCount} 手</span><b>可复盘</b></div>}
                 </button>
                 <footer><span><Heart fill={post.liked ? "currentColor" : "none"} size={15} />{post.likes}</span><span><MessageCircle size={15} />{post.comments}</span><button aria-label={post.favorited ? "取消收藏" : "收藏帖子"} className={post.favorited ? "active" : ""} onClick={() => void react(post, "favorite")} type="button"><Bookmark fill={post.favorited ? "currentColor" : "none"} size={16} /></button></footer>
               </article>)}
               {busy === "feed" && !posts.length && <div className="community-empty"><LoaderCircle className="spin" size={24} /><strong>正在连接星海社区</strong></div>}
-              {!busy && !posts.length && <div className="community-empty"><MessageCircle size={26} /><strong>{favoritesOnly ? "还没有收藏帖子" : "这里还没有讨论"}</strong><p>{favoritesOnly ? "遇到值得反复看的内容时，可以先收藏起来。" : "成为第一个分享棋局和想法的人。"}</p><button onClick={() => void openComposer()} type="button"><Plus size={16} />发布第一篇</button></div>}
+              {!busy && !posts.length && <div className="community-empty"><MessageCircle size={26} /><strong>{search ? "没有找到相关讨论" : favoritesOnly ? "还没有收藏帖子" : "这里还没有讨论"}</strong><p>{search ? "换一个关键词，或清除筛选后再看看。" : favoritesOnly ? "遇到值得反复看的内容时，可以先收藏起来。" : "成为第一个分享棋局和想法的人。"}</p>{search ? <button onClick={() => { setSearchDraft(""); setSearch(""); }} type="button"><X size={16} />清除搜索</button> : <button onClick={() => void openComposer()} type="button"><Plus size={16} />发布第一篇</button>}</div>}
             </div>
           </main>
           <aside className="community-sidebar">
@@ -354,7 +362,7 @@ export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCl
         </div>
       )}
 
-      {composerOpen && <div className="community-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOpen(false); }}><section aria-label="发布讨论" aria-modal="true" className="community-composer" role="dialog"><header><div><small>NEW DISCUSSION</small><h2>发布讨论</h2></div><button aria-label="关闭" onClick={() => setComposerOpen(false)} type="button"><X size={18} /></button></header>{error && <div className="community-composer-error">{error}</div>}<label><span>分类</span><select onChange={(event) => setPostCategory(event.target.value)} value={postCategory}>{categories.filter(([id]) => id !== "all").map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label><span>标题 <small className={postTitle.trim().length > 0 && postTitle.trim().length < MIN_POST_TITLE_LENGTH ? "is-short" : ""}>至少 {MIN_POST_TITLE_LENGTH} 个字 · 当前 {Array.from(postTitle.trim()).length}</small></span><input aria-invalid={postTitle.trim().length > 0 && postTitle.trim().length < MIN_POST_TITLE_LENGTH} maxLength={60} onChange={(event) => { setPostTitle(event.target.value); setError(""); }} placeholder="一句话说清想讨论什么" value={postTitle} /></label><label><span>正文 <small className={postBody.trim().length > 0 && postBody.trim().length < MIN_POST_BODY_LENGTH ? "is-short" : ""}>至少 {MIN_POST_BODY_LENGTH} 个字 · 当前 {Array.from(postBody.trim()).length}</small></span><textarea aria-invalid={postBody.trim().length > 0 && postBody.trim().length < MIN_POST_BODY_LENGTH} maxLength={3000} onChange={(event) => { setPostBody(event.target.value); setError(""); }} placeholder="分享你的想法、疑问或关键手数……" rows={8} value={postBody} /></label><label><span>附加棋谱 <small>可选</small></span><select onChange={(event) => setSavedGameId(event.target.value)} value={savedGameId}><option value="">不附加棋谱</option>{savedGames.map((record) => <option key={record.id} value={record.id}>{record.title}</option>)}</select></label>{selectedAttachment && <div className="community-selected-game"><Gamepad2 size={18} /><div><strong>{selectedAttachment.title}</strong><small>{gameName(selectedAttachment.game)} · {selectedAttachment.moveCount} 手</small></div><button aria-label="移除棋谱" onClick={() => setSavedGameId("")} type="button"><X size={15} /></button></div>}<footer><span>{postBody.length} / 3000</span><button onClick={() => setComposerOpen(false)} type="button">取消</button><button className="primary" disabled={busy === "createPost"} onClick={() => void submitPost()} type="button">{busy === "createPost" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发布</button></footer></section></div>}
+      {composerOpen && <div className="community-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOpen(false); }}><section aria-label="发布讨论" aria-modal="true" className="community-composer" role="dialog"><header><div><small>NEW DISCUSSION</small><h2>发布讨论</h2></div><button aria-label="关闭" onClick={() => setComposerOpen(false)} type="button"><X size={18} /></button></header>{error && <div className="community-composer-error">{error}</div>}<label><span>分类</span><select onChange={(event) => setPostCategory(event.target.value)} value={postCategory}>{categories.filter(([id]) => id !== "all").map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label><span>标题 <small className={postTitle.trim().length > 0 && postTitle.trim().length < MIN_POST_TITLE_LENGTH ? "is-short" : ""}>至少 {MIN_POST_TITLE_LENGTH} 个字 · 当前 {Array.from(postTitle.trim()).length}</small></span><input aria-invalid={postTitle.trim().length > 0 && postTitle.trim().length < MIN_POST_TITLE_LENGTH} maxLength={60} onChange={(event) => { setPostTitle(event.target.value); setError(""); }} placeholder="一句话说清想讨论什么" value={postTitle} /></label><label><span>正文 <small className={postBody.trim().length > 0 && postBody.trim().length < MIN_POST_BODY_LENGTH ? "is-short" : ""}>至少 {MIN_POST_BODY_LENGTH} 个字 · 当前 {Array.from(postBody.trim()).length}</small></span><textarea aria-invalid={postBody.trim().length > 0 && postBody.trim().length < MIN_POST_BODY_LENGTH} maxLength={3000} onChange={(event) => { setPostBody(event.target.value); setError(""); }} placeholder="分享想法、疑问或关键手数；输入 @用户名 可以提醒对方……" rows={8} value={postBody} /></label><label><span>附加棋谱 <small>可选</small></span><select onChange={(event) => setSavedGameId(event.target.value)} value={savedGameId}><option value="">不附加棋谱</option>{savedGames.map((record) => <option key={record.id} value={record.id}>{record.title}</option>)}</select></label>{selectedAttachment && <div className="community-selected-game"><Gamepad2 size={18} /><div><strong>{selectedAttachment.title}</strong><small>{gameName(selectedAttachment.game)} · {selectedAttachment.moveCount} 手</small></div><button aria-label="移除棋谱" onClick={() => setSavedGameId("")} type="button"><X size={15} /></button></div>}<footer><span>{postBody.length} / 3000</span><button onClick={() => setComposerOpen(false)} type="button">取消</button><button className="primary" disabled={busy === "createPost"} onClick={() => void submitPost()} type="button">{busy === "createPost" ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发布</button></footer></section></div>}
     </section>
   );
 }

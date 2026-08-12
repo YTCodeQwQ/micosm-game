@@ -15,7 +15,22 @@ export type MatchMove =
 export type UndoRequest = { requester: MatchPlayer };
 export type RematchRequest = { requester: MatchPlayer };
 export type MatchSnapshot = Omit<MatchState, "undoRequest" | "undoSnapshot" | "rematchRequest">;
-export type MatchClock = { blackMs: number; whiteMs: number; activeSince: number | null };
+export type MatchClockMode = "per_move" | "total" | "byoyomi";
+export type MatchClockConfig = {
+  mode: MatchClockMode;
+  initialMs: number;
+  byoYomiMs?: number;
+  periods?: number;
+};
+export type MatchClock = {
+  blackMs: number;
+  whiteMs: number;
+  activeSince: number | null;
+  blackPeriods?: number;
+  whitePeriods?: number;
+  blackInByoyomi?: boolean;
+  whiteInByoyomi?: boolean;
+};
 export type GoScore = { black: number; white: number };
 export type GoScoring = { dead: MatchPoint[]; confirmations: MatchPlayer[]; score?: GoScore };
 
@@ -50,6 +65,8 @@ export type MatchState = {
   resignedPlayer?: MatchPlayer | null;
   timedOutPlayer?: MatchPlayer | null;
   clock?: MatchClock;
+  clockConfig?: MatchClockConfig;
+  /** Legacy private-room clocks are interpreted as per-move timers. */
   clockConfigMs?: number;
   goScoring?: GoScoring | null;
   gomokuForbidden?: boolean;
@@ -136,13 +153,33 @@ export function activateMatch(state: MatchState) {
   return { ...state, status: "playing" as const, notice: "黑方行动" };
 }
 
-export function startMatchClock(state: MatchState, duration: number, now = Date.now()): MatchState {
+export function getMatchClockConfig(state: MatchState): MatchClockConfig | undefined {
+  if (state.clockConfig) return state.clockConfig;
+  if (state.clockConfigMs) return { mode: "per_move", initialMs: state.clockConfigMs };
+  return undefined;
+}
+
+export function startConfiguredMatchClock(state: MatchState, config: MatchClockConfig, now = Date.now()): MatchState {
+  const periods = config.mode === "byoyomi" ? Math.max(1, config.periods ?? 3) : undefined;
   return {
     ...state,
-    clock: { blackMs: duration, whiteMs: duration, activeSince: now },
-    clockConfigMs: duration,
+    clock: {
+      blackMs: config.initialMs,
+      whiteMs: config.initialMs,
+      activeSince: state.status === "playing" ? now : null,
+      blackPeriods: periods,
+      whitePeriods: periods,
+      blackInByoyomi: false,
+      whiteInByoyomi: false,
+    },
+    clockConfig: { ...config, periods },
+    clockConfigMs: config.mode === "per_move" ? config.initialMs : undefined,
     timedOutPlayer: null,
   };
+}
+
+export function startMatchClock(state: MatchState, duration: number, now = Date.now()): MatchState {
+  return startConfiguredMatchClock(state, { mode: "per_move", initialMs: duration }, now);
 }
 
 export function startRankedClock(state: MatchState, now = Date.now()): MatchState {
@@ -152,11 +189,65 @@ export function startRankedClock(state: MatchState, now = Date.now()): MatchStat
 
 export function projectMatchClock(state: MatchState, now = Date.now()): MatchState {
   if (state.status !== "playing" || !state.clock || state.clock.activeSince === null) return state;
+  const config = getMatchClockConfig(state);
+  if (!config) return state;
   const elapsed = Math.max(0, now - state.clock.activeSince);
   const key = state.turn === "black" ? "blackMs" : "whiteMs";
-  const remaining = Math.max(0, state.clock[key] - elapsed);
-  const clock = { ...state.clock, [key]: remaining, activeSince: now } as MatchClock;
-  if (remaining > 0) return { ...state, clock };
+  const periodsKey = state.turn === "black" ? "blackPeriods" : "whitePeriods";
+  const inByoyomiKey = state.turn === "black" ? "blackInByoyomi" : "whiteInByoyomi";
+  let remaining = state.clock[key];
+  let periods = state.clock[periodsKey] ?? config.periods ?? 0;
+  let inByoyomi = state.clock[inByoyomiKey] ?? false;
+  let timedOut = false;
+
+  if (config.mode !== "byoyomi") {
+    remaining = Math.max(0, remaining - elapsed);
+    timedOut = remaining <= 0;
+  } else {
+    const byoYomiMs = Math.max(1, config.byoYomiMs ?? 30_000);
+    let spent = elapsed;
+    if (!inByoyomi) {
+      if (spent < remaining) {
+        remaining -= spent;
+        spent = 0;
+      } else {
+        spent -= remaining;
+        inByoyomi = true;
+        remaining = byoYomiMs;
+      }
+    }
+    if (inByoyomi && spent > 0) {
+      if (spent < remaining) {
+        remaining -= spent;
+      } else {
+        spent -= remaining;
+        periods -= 1;
+        if (periods <= 0) {
+          remaining = 0;
+          timedOut = true;
+        } else {
+          const additionalPeriods = Math.floor(spent / byoYomiMs);
+          periods -= additionalPeriods;
+          if (periods <= 0) {
+            remaining = 0;
+            timedOut = true;
+          } else {
+            const remainder = spent % byoYomiMs;
+            remaining = remainder === 0 ? byoYomiMs : byoYomiMs - remainder;
+          }
+        }
+      }
+    }
+  }
+
+  const clock = {
+    ...state.clock,
+    [key]: remaining,
+    [periodsKey]: periods,
+    [inByoyomiKey]: inByoyomi,
+    activeSince: now,
+  } as MatchClock;
+  if (!timedOut) return { ...state, clock };
   const winner = opponent(state.turn);
   return {
     ...state,
@@ -165,14 +256,35 @@ export function projectMatchClock(state: MatchState, now = Date.now()): MatchSta
     timedOutPlayer: state.turn,
     undoRequest: null,
     clock: { ...clock, activeSince: null },
-    notice: `${playerName(state.turn)}本手用时耗尽，${playerName(winner)}获胜`,
+    notice: `${playerName(state.turn)}用时耗尽，${playerName(winner)}获胜`,
   };
+}
+
+function restartConfiguredClock(state: MatchState, target: MatchState, now = Date.now()) {
+  const config = getMatchClockConfig(state);
+  return config ? startConfiguredMatchClock(target, config, now) : target;
+}
+
+function clockAfterMove(state: MatchState, nextStatus: MatchState["status"], player: MatchPlayer, now = Date.now()) {
+  if (!state.clock) return undefined;
+  const config = getMatchClockConfig(state);
+  if (!config) return undefined;
+  if (nextStatus !== "playing") return { ...state.clock, activeSince: null };
+  if (config.mode === "per_move") {
+    return { blackMs: config.initialMs, whiteMs: config.initialMs, activeSince: now };
+  }
+  const clock = { ...state.clock, activeSince: now };
+  if (config.mode === "byoyomi" && state.clock[player === "black" ? "blackInByoyomi" : "whiteInByoyomi"]) {
+    const key = player === "black" ? "blackMs" : "whiteMs";
+    clock[key] = config.byoYomiMs ?? 30_000;
+  }
+  return clock;
 }
 
 export function applyMatchAction(state: MatchState, player: MatchPlayer, action: MatchAction): MatchState {
   if (action.type === "reset") {
     const reset = activateMatch(createMatchState(state.game, state.size, state.hostColorPreference, state.gomokuForbidden));
-    return state.clockConfigMs ? startMatchClock(reset, state.clockConfigMs) : reset;
+    return restartConfiguredClock(state, reset);
   }
   if (action.type === "requestUndo") return requestUndo(state, player);
   if (action.type === "cancelUndo") return cancelUndo(state, player);
@@ -234,11 +346,7 @@ export function applyMatchAction(state: MatchState, player: MatchPlayer, action:
     lastPlayer: player,
     undoRequest: null,
     undoSnapshot: snapshot,
-    clock: next.clock && next.clockConfigMs
-      ? next.status === "playing"
-        ? { blackMs: next.clockConfigMs, whiteMs: next.clockConfigMs, activeSince: Date.now() }
-        : { ...next.clock, activeSince: null }
-      : undefined,
+    clock: clockAfterMove(state, next.status, player),
   };
 }
 
@@ -282,8 +390,8 @@ function respondUndo(state: MatchState, player: MatchPlayer, accept: boolean): M
   if (request.requester === player) throw new MatchRuleError("undo_self_response", "需要等待对手处理悔棋请求");
   if (!accept) return { ...state, undoRequest: null, notice: `${playerName(player)}拒绝了悔棋` };
   if (!state.undoSnapshot) throw new MatchRuleError("nothing_to_undo", "上一手棋局快照已经失效");
-  const restoredClock = state.undoSnapshot.clock && state.undoSnapshot.clockConfigMs
-    ? { blackMs: state.undoSnapshot.clockConfigMs, whiteMs: state.undoSnapshot.clockConfigMs, activeSince: Date.now() }
+  const restoredClock = state.undoSnapshot.clock
+    ? { ...state.undoSnapshot.clock, activeSince: state.undoSnapshot.status === "playing" ? Date.now() : null }
     : undefined;
   return { ...state.undoSnapshot, undoRequest: null, undoSnapshot: null, lastPlayer: null, clock: restoredClock, notice: "双方同意，已撤销上一手" };
 }
@@ -307,7 +415,7 @@ function respondRematch(state: MatchState, player: MatchPlayer, accept: boolean)
   if (request.requester === player) throw new MatchRuleError("rematch_self_response", "需要等待对手处理再战请求");
   if (!accept) return { ...state, rematchRequest: null, notice: `${playerName(player)}拒绝了再战` };
   const reset = activateMatch(createMatchState(state.game, state.size, state.hostColorPreference, state.gomokuForbidden));
-  return state.clockConfigMs ? startMatchClock(reset, state.clockConfigMs) : reset;
+  return restartConfiguredClock(state, reset);
 }
 
 function groupAt(board: MatchStone[][], row: number, col: number) {
@@ -419,9 +527,7 @@ function resumeGo(state: MatchState, player: MatchPlayer): MatchState {
     turn,
     passes: 0,
     goScoring: null,
-    clock: state.clock && state.clockConfigMs
-      ? { blackMs: state.clockConfigMs, whiteMs: state.clockConfigMs, activeSince: Date.now() }
-      : undefined,
+    clock: state.clock ? { ...state.clock, activeSince: Date.now() } : undefined,
     notice: `${playerName(player)}要求继续对局，${playerName(turn)}行动`,
   };
 }

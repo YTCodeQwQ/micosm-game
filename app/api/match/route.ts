@@ -7,11 +7,13 @@ import { ensureFriendSchema } from "../../../lib/friends";
 import { ensureMatchDiagnosticsSchema, findActionReceipt, normalizeActionId, recordMatchEvent, requestIdFor, saveActionReceipt } from "../../../lib/match-diagnostics";
 import { archiveFinishedMatch, ensureMatchHistorySchema } from "../../../lib/match-history";
 import { activeSanction } from "../../../lib/moderation";
+import { featureEnabled } from "../../../lib/operations";
+import { createNotification } from "../../../lib/notifications";
 import { notifyPlatform } from "../../../lib/platform-realtime";
-import { ensureRankSchema, rankChange } from "../../../lib/rank";
+import { ensureRankSchema, rankChange, rankSeasonForGame } from "../../../lib/rank";
 import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 import { logEvent } from "../../../lib/observability";
-import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchGame, type MatchPlayer, type MatchState, type SpectatorPolicy } from "../../../lib/match-engine";
+import { activateMatch, applyMatchAction, createMatchState, MatchRuleError, projectMatchClock, startConfiguredMatchClock, startRankedClock, type AiDifficulty, type ColorPreference, type MatchAction, type MatchClockConfig, type MatchClockMode, type MatchGame, type MatchPlayer, type MatchState, type SpectatorPolicy } from "../../../lib/match-engine";
 
 type RoomMode = "private" | "matchmaking" | "ranked" | "ai";
 type RoomRow = {
@@ -39,7 +41,7 @@ type RoomRow = {
 };
 
 type QueueRow = RoomRow & { queue_key: string };
-type RankedQueueRow = RoomRow & { queue_user_id: string; queue_rating: number; queue_created_at: number; queue_player_id: string; queue_updated_at: number };
+type RankedQueueRow = RoomRow & { queue_user_id: string; queue_rating: number; queue_created_at: number; queue_player_id: string; queue_updated_at: number; queue_season_id: string | null };
 type D1 = ReturnType<typeof getD1>;
 const ROOM_DISCONNECT_MS = 30_000;
 const RANK_SETTLEMENT_STALE_MS = 60_000;
@@ -341,13 +343,13 @@ async function recordRequestError(requestId: string, method: "GET" | "POST", err
   }
 }
 
-async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, mode: RoomMode, turnSeconds?: number, forbiddenMoves = false, spectatorPolicy: SpectatorPolicy = "off") {
+async function createWaitingRoom(d1: D1, game: MatchGame, size: number, preference: ColorPreference, player: AuthUser, mode: RoomMode, clockConfig?: MatchClockConfig, forbiddenMoves = false, spectatorPolicy: SpectatorPolicy = "off") {
   const playerId = crypto.randomUUID();
   const now = Date.now();
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const id = roomCode();
     const baseState = createMatchState(game, size, preference, game === "gomoku" && (mode === "ranked" || mode === "matchmaking" || forbiddenMoves));
-    const state = mode === "private" && turnSeconds ? { ...baseState, clockConfigMs: turnSeconds * 1000 } : baseState;
+    const state = mode === "private" && clockConfig ? { ...baseState, clockConfig } : baseState;
     try {
       await d1.prepare("INSERT INTO game_rooms (id, game, black_player, black_name, black_avatar, black_signature, host_user_id, black_user_id, mode, board_size, spectator_policy, state, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
         .bind(id, game, playerId, player.displayName, player.avatarKey, player.signature, player.id, player.id, mode, state.size, mode === "private" ? spectatorPolicy : "off", JSON.stringify(state), now, now).run();
@@ -474,8 +476,10 @@ async function claimWaitingRoom(d1: D1, row: RoomRow, guest: AuthUser) {
   const activeState = activateMatch(waitingState);
   const state = (row.mode ?? "private") === "ranked"
     ? startRankedClock(activeState, now)
-    : waitingState.clockConfigMs
-      ? startMatchClock(activeState, waitingState.clockConfigMs, now)
+    : waitingState.clockConfig
+      ? startConfiguredMatchClock(activeState, waitingState.clockConfig, now)
+      : waitingState.clockConfigMs
+        ? startConfiguredMatchClock(activeState, { mode: "per_move", initialMs: waitingState.clockConfigMs }, now)
       : activeState;
   const result = await d1.prepare("UPDATE game_rooms SET black_player = ?, white_player = ?, black_name = ?, white_name = ?, black_avatar = ?, white_avatar = ?, black_signature = ?, white_signature = ?, guest_user_id = ?, black_user_id = ?, white_user_id = ?, state = ?, version = version + 1, updated_at = ? WHERE id = ? AND white_player IS NULL")
     .bind(blackPlayer, whitePlayer, blackName, whiteName, blackAvatar, whiteAvatar, blackSignature, whiteSignature, guest.id, blackUserId, whiteUserId, JSON.stringify(state), now, row.id).run();
@@ -508,7 +512,7 @@ async function rankProfile(d1: D1, userId: string, game: "go" | "gomoku") {
   return await d1.prepare("SELECT rating, streak FROM rank_profiles WHERE user_id = ? AND game = ?").bind(userId, game).first<{ rating: number; streak: number }>() as { rating: number; streak: number };
 }
 
-async function createRankMatch(d1: D1, waitingRoom: RoomRow, joinedRoom: RoomRow, guest: AuthUser, hostIsBlack: boolean) {
+async function createRankMatch(d1: D1, waitingRoom: RoomRow, joinedRoom: RoomRow, guest: AuthUser, hostIsBlack: boolean, seasonId: string) {
   if (!waitingRoom.host_user_id || (joinedRoom.game !== "go" && joinedRoom.game !== "gomoku")) throw new Error("排位房间身份无效");
   const hostProfile = await rankProfile(d1, waitingRoom.host_user_id, joinedRoom.game);
   const guestProfile = await rankProfile(d1, guest.id, joinedRoom.game);
@@ -516,8 +520,8 @@ async function createRankMatch(d1: D1, waitingRoom: RoomRow, joinedRoom: RoomRow
   const whiteUserId = hostIsBlack ? guest.id : waitingRoom.host_user_id;
   const blackRating = hostIsBlack ? hostProfile.rating : guestProfile.rating;
   const whiteRating = hostIsBlack ? guestProfile.rating : hostProfile.rating;
-  await d1.prepare("INSERT INTO rank_matches (room_id, game, black_user_id, white_user_id, black_rating_before, white_rating_before, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)")
-    .bind(joinedRoom.id, joinedRoom.game, blackUserId, whiteUserId, blackRating, whiteRating, Date.now()).run();
+  await d1.prepare("INSERT INTO rank_matches (room_id, season_id, game, black_user_id, white_user_id, black_rating_before, white_rating_before, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)")
+    .bind(joinedRoom.id, seasonId, joinedRoom.game, blackUserId, whiteUserId, blackRating, whiteRating, Date.now()).run();
 }
 
 async function settleRankedMatch(d1: D1, row: RoomRow, state: MatchState) {
@@ -562,6 +566,18 @@ async function settleRankedMatch(d1: D1, row: RoomRow, state: MatchState) {
 async function settleAndArchiveMatch(d1: D1, row: RoomRow, state: MatchState, diagnostic?: { requestId: string; actorUserId?: string | null; actorPlayerId?: string | null }) {
   await settleRankedMatch(d1, row, state);
   await archiveFinishedMatch(d1, row, state);
+  if (state.status === "ended" && state.winner) {
+    const recipients = [[row.black_user_id, "black"], [row.white_user_id, "white"]] as const;
+    const notified: string[] = [];
+    for (const [userId, role] of recipients) {
+      if (!userId) continue;
+      const won = state.winner === role;
+      const drew = state.winner === "draw";
+      const created = await createNotification(d1, { userId, kind: "match_result", title: drew ? "对局和棋" : won ? "对局获胜" : "对局结束", message: `${row.game === "go" ? "围棋" : row.game === "gomoku" ? "五子棋" : "黑白棋"}${row.mode === "ranked" ? "排位" : "对局"}已结束，${drew ? "双方和棋" : won ? "你获得了胜利" : "胜负已分"}。`, entityType: "match", entityId: row.id, dedupeKey: `match-result:${row.id}:${userId}` });
+      if (created) notified.push(userId);
+    }
+    if (notified.length) await notifyPlatform({ type: "notifications_updated", userIds: notified });
+  }
   if (state.status === "ended" && state.winner && diagnostic) {
     await recordMatchEvent(d1, { roomId: row.id, requestId: diagnostic.requestId, type: "match_archived", actorUserId: diagnostic.actorUserId, actorPlayerId: diagnostic.actorPlayerId, roomVersion: row.version, details: { winner: state.winner } });
     if ((row.mode ?? "private") === "ranked") {
@@ -652,6 +668,7 @@ export async function GET(request: Request) {
     if (!row) return jsonError("room_not_found", "没有找到这个对局", 404, requestId);
     const authenticatedPlayerId = playerIdForUser(row, sessionUser.id);
     if (!authenticatedPlayerId) {
+      if (!await featureEnabled(d1, "spectating_enabled")) return jsonError("spectating_disabled", "观战系统暂时关闭", 503, requestId);
       if (!await canSpectateRoom(d1, row, sessionUser.id)) return jsonError("spectating_forbidden", "这个房间没有开放观战", 403, requestId);
       await heartbeatSpectator(d1, row.id, sessionUser.id);
     }
@@ -672,12 +689,14 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const requestId = requestIdFor(request);
   try {
-    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; turnSeconds?: number; clockMinutes?: number; forbiddenMoves?: boolean; spectatorPolicy?: SpectatorPolicy; enabled?: boolean; roomId?: string; playerId?: string; actionId?: string; action?: MatchAction };
+    const payload = await request.json() as { type?: string; game?: MatchGame; size?: number; colorPreference?: ColorPreference; aiDifficulty?: AiDifficulty; clockMode?: MatchClockMode; turnSeconds?: number; clockMinutes?: number; totalMinutes?: number; byoYomiSeconds?: number; byoYomiPeriods?: number; forbiddenMoves?: boolean; spectatorPolicy?: SpectatorPolicy; enabled?: boolean; roomId?: string; playerId?: string; actionId?: string; action?: MatchAction };
     const d1 = await ensureSchema();
     const sessionUser = await getSessionUser(request, d1);
     if (!sessionUser) return jsonError("auth_required", "请先登录", 401, requestId);
     const sanction = await activeSanction(d1, sessionUser.id);
     if (sanction.banned) return jsonError("account_banned", "账号已被暂停使用", 403, requestId);
+    const createsNewBusiness = ["createAI", "rankmake", "create", "matchmake", "join"].includes(payload.type ?? "");
+    if (createsNewBusiness && await featureEnabled(d1, "maintenance_mode")) return jsonError("maintenance_mode", "平台正在维护，暂时不能创建或加入新对局", 503, requestId);
     const expensiveTypes = new Set(["createAI", "rankmake", "create", "matchmake", "join"]);
     const rate = await consumeRateLimit(d1, {
       scope: payload.type === "aiMove" ? "match_ai" : expensiveTypes.has(payload.type ?? "") ? "match_create" : "match_action",
@@ -690,6 +709,8 @@ export async function POST(request: Request) {
     if (payload.type === "createAI") {
       if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return jsonError("invalid_game", "当前游戏暂不支持人机对战", 400, requestId);
       const difficulty = AI_DIFFICULTIES.includes(payload.aiDifficulty ?? "normal") ? payload.aiDifficulty ?? "normal" : "normal";
+      if (difficulty === "master" && payload.game === "go" && !await featureEnabled(d1, "ai_go_master_enabled")) return jsonError("ai_master_disabled", "KataGo 最高难度暂时关闭", 503, requestId);
+      if (difficulty === "master" && payload.game === "gomoku" && !await featureEnabled(d1, "ai_gomoku_master_enabled")) return jsonError("ai_master_disabled", "Rapfi 最高难度暂时关闭", 503, requestId);
       const preference: ColorPreference = ["black", "white", "random"].includes(payload.colorPreference ?? "black") ? payload.colorPreference ?? "black" : "black";
       if (payload.game === "go" && difficulty === "master" && !(await ensureKataGoReady())) {
         return jsonError("katago_unavailable", "最高难度需要先启动本机 KataGo GPU 服务", 503, requestId);
@@ -705,12 +726,16 @@ export async function POST(request: Request) {
     if (payload.type === "rankmake") {
       if (!payload.game || !["go", "gomoku"].includes(payload.game)) return jsonError("ranked_game_unavailable", "当前游戏不参与排位", 400, requestId);
       const game = payload.game as "go" | "gomoku";
+      if (!await featureEnabled(d1, game === "go" ? "ranked_go_enabled" : "ranked_gomoku_enabled")) return jsonError("ranked_disabled", `${game === "go" ? "围棋" : "五子棋"}排位暂时关闭`, 503, requestId);
+      const seasonState = await rankSeasonForGame(d1, game);
+      if (!seasonState.playable || !seasonState.season) return jsonError("ranked_season_unavailable", seasonState.reason || "当前没有可参加的排位赛季", 409, requestId);
+      const seasonId = seasonState.season.id;
       const size = game === "go" ? 19 : 15;
       const activeMatch = await d1.prepare("SELECT room_id FROM rank_matches WHERE status IN ('active', 'settling') AND (black_user_id = ? OR white_user_id = ?) LIMIT 1").bind(sessionUser.id, sessionUser.id).first<{ room_id: string }>();
       if (activeMatch) return jsonError("ranked_match_active", "你已经有一场进行中的排位对局", 409, requestId);
-      const existing = await d1.prepare("SELECT q.user_id AS queue_user_id, q.rating AS queue_rating, q.created_at AS queue_created_at, q.player_id AS queue_player_id, q.updated_at AS queue_updated_at, r.* FROM ranked_queue q JOIN game_rooms r ON r.id = q.room_id WHERE q.user_id = ?")
+      const existing = await d1.prepare("SELECT q.user_id AS queue_user_id, q.rating AS queue_rating, q.created_at AS queue_created_at, q.player_id AS queue_player_id, q.updated_at AS queue_updated_at, q.season_id AS queue_season_id, r.* FROM ranked_queue q JOIN game_rooms r ON r.id = q.room_id WHERE q.user_id = ?")
         .bind(sessionUser.id).first<RankedQueueRow>();
-      if (existing && existing.queue_updated_at >= Date.now() - 20_000) return Response.json({ room: await publicRoomWithRank(d1, existing, existing.queue_player_id, sessionUser.id), playerId: existing.queue_player_id });
+      if (existing && existing.queue_season_id === seasonId && existing.game === game && existing.queue_updated_at >= Date.now() - 20_000) return Response.json({ room: await publicRoomWithRank(d1, existing, existing.queue_player_id, sessionUser.id), playerId: existing.queue_player_id });
       if (existing) {
         await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ?").bind(sessionUser.id).run();
         await d1.prepare("DELETE FROM game_rooms WHERE id = ? AND white_player IS NULL").bind(existing.id).run();
@@ -720,8 +745,8 @@ export async function POST(request: Request) {
       const now = Date.now();
       const candidates = await d1.prepare(`SELECT q.user_id AS queue_user_id, q.rating AS queue_rating, q.created_at AS queue_created_at, q.player_id AS queue_player_id, q.updated_at AS queue_updated_at, r.*
         FROM ranked_queue q JOIN game_rooms r ON r.id = q.room_id
-        WHERE q.game = ? AND q.board_size = ? AND q.user_id != ?
-        ORDER BY ABS(q.rating - ?) ASC, q.created_at ASC LIMIT 20`).bind(game, size, sessionUser.id, profile.rating).all<RankedQueueRow>();
+        WHERE q.season_id = ? AND q.game = ? AND q.board_size = ? AND q.user_id != ?
+        ORDER BY ABS(q.rating - ?) ASC, q.created_at ASC LIMIT 20`).bind(seasonId, game, size, sessionUser.id, profile.rating).all<RankedQueueRow>();
       for (const queued of candidates.results) {
         if (queued.queue_updated_at < now - 20_000) {
           await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ? AND room_id = ?").bind(queued.queue_user_id, queued.id).run();
@@ -733,14 +758,14 @@ export async function POST(request: Request) {
         const joined = await claimWaitingRoom(d1, queued, sessionUser);
         if (!joined) continue;
         await d1.prepare("DELETE FROM ranked_queue WHERE user_id = ? AND room_id = ?").bind(queued.queue_user_id, queued.id).run();
-        await createRankMatch(d1, queued, joined.row, sessionUser, joined.hostIsBlack);
+        await createRankMatch(d1, queued, joined.row, sessionUser, joined.hostIsBlack, seasonId);
         await recordMatchEvent(d1, { roomId: joined.row.id, requestId, type: "room_joined", actorUserId: sessionUser.id, actorPlayerId: joined.playerId, roomVersion: joined.row.version, details: { game, mode: "ranked" } });
         return Response.json({ room: await publicRoomWithRank(d1, joined.row, joined.playerId, sessionUser.id), playerId: joined.playerId });
       }
 
       const created = await createWaitingRoom(d1, game, size, "random", sessionUser, "ranked");
-      await d1.prepare("INSERT INTO ranked_queue (user_id, room_id, player_id, game, board_size, rating, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(sessionUser.id, created.row.id, created.playerId, game, size, profile.rating, now, now).run();
+      await d1.prepare("INSERT INTO ranked_queue (user_id, room_id, player_id, season_id, game, board_size, rating, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(sessionUser.id, created.row.id, created.playerId, seasonId, game, size, profile.rating, now, now).run();
       await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game, mode: "ranked" } });
       return Response.json({ room: await publicRoomWithRank(d1, created.row, created.playerId, sessionUser.id), playerId: created.playerId }, { status: 201 });
     }
@@ -748,16 +773,39 @@ export async function POST(request: Request) {
     if (payload.type === "create" || payload.type === "matchmake") {
       if (!payload.game || !["go", "gomoku", "reversi"].includes(payload.game)) return jsonError("invalid_game", "当前游戏不支持双人对局", 400, requestId);
       const size = normalizedSize(payload.game, payload.size);
+      if (payload.type === "matchmake" && !await featureEnabled(d1, "public_matchmaking_enabled")) return jsonError("matchmaking_disabled", "快速匹配暂时关闭", 503, requestId);
 
       if (payload.type === "create") {
         const colorPreference: ColorPreference = payload.game === "reversi" ? "black" : ["black", "white", "random"].includes(payload.colorPreference ?? "black") ? payload.colorPreference ?? "black" : "black";
-        const turnSeconds = payload.turnSeconds ?? (payload.clockMinutes ? payload.clockMinutes * 60 : undefined);
-        if (turnSeconds !== undefined && (!Number.isInteger(turnSeconds) || turnSeconds < 5 || turnSeconds > 600)) {
-          return jsonError("invalid_clock", "每手用时需要设置为 5 至 600 秒", 400, requestId);
+        const requestedClock = payload.clockMode !== undefined || payload.turnSeconds !== undefined || payload.clockMinutes !== undefined;
+        const clockMode: MatchClockMode = payload.clockMode ?? "per_move";
+        let clockConfig: MatchClockConfig | undefined;
+        if (requestedClock && clockMode === "per_move") {
+          const turnSeconds = payload.turnSeconds ?? (payload.clockMinutes ? payload.clockMinutes * 60 : undefined);
+          if (!Number.isInteger(turnSeconds) || (turnSeconds ?? 0) < 5 || (turnSeconds ?? 0) > 600) {
+            return jsonError("invalid_clock", "每手用时需要设置为 5 至 600 秒", 400, requestId);
+          }
+          clockConfig = { mode: "per_move", initialMs: (turnSeconds as number) * 1000 };
+        } else if (requestedClock && clockMode === "total") {
+          const totalMinutes = payload.totalMinutes ?? 20;
+          if (!Number.isInteger(totalMinutes) || totalMinutes < 1 || totalMinutes > 180) {
+            return jsonError("invalid_clock", "双方总用时需要设置为 1 至 180 分钟", 400, requestId);
+          }
+          clockConfig = { mode: "total", initialMs: totalMinutes * 60_000 };
+        } else if (requestedClock && clockMode === "byoyomi") {
+          if (payload.game !== "go") return jsonError("invalid_clock_mode", "读秒规则仅适用于围棋", 400, requestId);
+          const totalMinutes = payload.totalMinutes ?? 20;
+          const byoYomiSeconds = payload.byoYomiSeconds ?? 30;
+          const periods = payload.byoYomiPeriods ?? 3;
+          if (!Number.isInteger(totalMinutes) || totalMinutes < 1 || totalMinutes > 180 || !Number.isInteger(byoYomiSeconds) || byoYomiSeconds < 10 || byoYomiSeconds > 120 || !Number.isInteger(periods) || periods < 1 || periods > 10) {
+            return jsonError("invalid_clock", "读秒需要设置 1 至 180 分钟主时间、10 至 120 秒和 1 至 10 次读秒", 400, requestId);
+          }
+          clockConfig = { mode: "byoyomi", initialMs: totalMinutes * 60_000, byoYomiMs: byoYomiSeconds * 1000, periods };
         }
-        const spectatorPolicy: SpectatorPolicy = ["off", "friends", "public"].includes(payload.spectatorPolicy ?? "off") ? payload.spectatorPolicy ?? "off" : "off";
-        const created = await createWaitingRoom(d1, payload.game, size, colorPreference, sessionUser, "private", turnSeconds, payload.forbiddenMoves === true, spectatorPolicy);
-        await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game: payload.game, mode: "private", turnSeconds: turnSeconds ?? null } });
+        const spectatorEnabled = await featureEnabled(d1, "spectating_enabled");
+        const spectatorPolicy: SpectatorPolicy = spectatorEnabled && ["off", "friends", "public"].includes(payload.spectatorPolicy ?? "off") ? payload.spectatorPolicy ?? "off" : "off";
+        const created = await createWaitingRoom(d1, payload.game, size, colorPreference, sessionUser, "private", clockConfig, payload.forbiddenMoves === true, spectatorPolicy);
+        await recordMatchEvent(d1, { roomId: created.row.id, requestId, type: "room_created", actorUserId: sessionUser.id, actorPlayerId: created.playerId, roomVersion: created.row.version, details: { game: payload.game, mode: "private", clockConfig: clockConfig ?? null } });
         return Response.json({ room: publicRoom(created.row, created.playerId), playerId: created.playerId }, { status: 201 });
       }
 
@@ -814,6 +862,7 @@ export async function POST(request: Request) {
     row = await resolveMatchTimeout(d1, row, requestId);
 
     if (payload.type === "spectatorConsent") {
+      if (!await featureEnabled(d1, "spectating_enabled")) return jsonError("spectating_disabled", "观战系统暂时关闭", 503, requestId);
       if ((row.mode ?? "private") !== "matchmaking") return jsonError("spectator_consent_unavailable", "只有快速匹配需要双方确认观战", 409, requestId);
       const authenticatedPlayerId = playerIdForUser(row, sessionUser.id) ?? "";
       const role = roleFor(row, authenticatedPlayerId);

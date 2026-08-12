@@ -1,15 +1,18 @@
 # Production Operations Design
 
-Status: design only; implementation requires owner approval.
+Status: server-side feature flags and the first operations dashboard are
+implemented. External monitoring, release/incident records and backup history
+remain deployment work.
 
 Last reviewed: 2026-08-11
 
 ## Goal
 
-The current repository has health endpoints, AI supervision, backup/restore
-scripts and a written rollback procedure. The next step is to turn those pieces
-into a reliable operating routine and a read-only administrator view without
-making dangerous server actions available through one browser click.
+The repository has health endpoints, AI supervision, backup/restore scripts, a
+written rollback procedure, an audited feature-flag store and an administrator
+operations view. The next step is to connect external monitoring, scheduled
+backup evidence and release/incident records without making dangerous server
+actions available through one browser click.
 
 ## System Of Record
 
@@ -88,7 +91,7 @@ cookies, phone numbers and tokens.
 
 ## Safe Feature Controls
 
-Planned server-side feature flags:
+Implemented server-side feature flags:
 
 - registration open/closed;
 - public matchmaking enabled;
@@ -123,8 +126,9 @@ the browser.
 1. Define release/incident/feature-flag records and operator permissions.
 2. Connect external health checks and alert delivery.
 3. Schedule backups and record results.
-4. Add the read-only operations dashboard.
-5. Add audited feature flags and maintenance mode.
+4. Add the read-only operations dashboard. **Implemented for current runtime
+   health and flags; release/backup/incident data remains.**
+5. Add audited feature flags and maintenance mode. **Implemented.**
 6. Complete an isolated restore and rollback drill.
 
 Load testing is intentionally scheduled after the SMS, admin foundation and AI

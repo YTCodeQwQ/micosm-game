@@ -19,25 +19,31 @@ export type AdminPermission =
   | "matches.read"
   | "ranking.read"
   | "ranking.write"
+  | "ranking.seasons.write"
   | "ai.read"
   | "ai.write"
   | "announcements.write"
+  | "community.write"
+  | "policies.read"
+  | "policies.write"
   | "audit.read"
   | "roles.write"
-  | "operations.read";
+  | "operations.read"
+  | "operations.write"
+  | "beta.manage";
 
 const ALL_PERMISSIONS: AdminPermission[] = [
   "overview.read", "users.read", "users.sanction", "users.sessions", "reports.read", "reports.write",
-  "matches.read", "ranking.read", "ranking.write", "ai.read", "ai.write", "announcements.write",
-  "audit.read", "roles.write", "operations.read",
+  "matches.read", "ranking.read", "ranking.write", "ranking.seasons.write", "ai.read", "ai.write", "announcements.write", "community.write",
+  "policies.read", "policies.write", "audit.read", "roles.write", "operations.read", "operations.write", "beta.manage",
 ];
 
 const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
   super_admin: ALL_PERMISSIONS,
-  admin: ALL_PERMISSIONS.filter((permission) => permission !== "roles.write" && permission !== "operations.read"),
-  moderator: ["overview.read", "users.read", "users.sanction", "reports.read", "reports.write", "matches.read"],
-  support: ["overview.read", "users.read", "users.sessions", "matches.read", "ranking.read"],
-  operator: ["overview.read", "ai.read", "ai.write", "audit.read", "operations.read"],
+  admin: ALL_PERMISSIONS.filter((permission) => permission !== "roles.write" && permission !== "ranking.seasons.write" && permission !== "beta.manage" && !permission.startsWith("operations.")),
+  moderator: ["overview.read", "users.read", "users.sanction", "reports.read", "reports.write", "matches.read", "community.write"],
+  support: ["overview.read", "users.read", "users.sessions", "matches.read", "ranking.read", "policies.read"],
+  operator: ["overview.read", "ai.read", "ai.write", "audit.read", "operations.read", "operations.write"],
 };
 
 export function permissionsForRole(role: AdminRole) {

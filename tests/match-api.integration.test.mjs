@@ -296,6 +296,10 @@ test("ranked settlement is applied once and a refreshed client recovers its role
 
   const firstRankAfter = await first.request("/api/rank?game=gomoku");
   const secondRankAfter = await second.request("/api/rank?game=gomoku");
+  assert.equal(firstRankAfter.response.status, 200, JSON.stringify(firstRankAfter.data));
+  assert.equal(firstRankAfter.data.season?.status, "active");
+  assert.equal(firstRankAfter.data.seasonPlayable, true);
+  assert.equal(typeof firstRankAfter.data.season?.name, "string");
   assert.equal(firstRankAfter.data.profiles.gomoku.matches, 1);
   assert.equal(secondRankAfter.data.profiles.gomoku.matches, 1);
   const ratingsAfter = [firstRankAfter.data.profiles.gomoku.rating, secondRankAfter.data.profiles.gomoku.rating];

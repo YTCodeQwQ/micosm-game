@@ -22,7 +22,7 @@ function start(name, failures = 0) {
     cwd: root,
     env: process.env,
     stdio: "inherit",
-    windowsHide: false,
+    windowsHide: true,
   });
   children.set(name, child);
   log("info", "child_started", { child: name, pid: child.pid });

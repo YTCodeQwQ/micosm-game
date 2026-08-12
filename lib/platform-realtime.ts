@@ -1,7 +1,7 @@
 import { getPlatformHub } from "../db";
 
 export type PlatformRealtimeEvent = {
-  type: "chat_updated" | "community_updated" | "friends_updated" | "presence_updated" | "lobby_updated" | "moderation_updated" | "account_restricted";
+  type: "chat_updated" | "community_updated" | "friends_updated" | "presence_updated" | "lobby_updated" | "moderation_updated" | "account_restricted" | "operations_updated" | "notifications_updated";
   userIds?: string[];
   hall?: string;
   channel?: string;

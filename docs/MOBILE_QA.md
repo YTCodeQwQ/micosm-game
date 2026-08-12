@@ -4,7 +4,7 @@ Automated Playwright checks run the app at 320 px, 412 px, and 430 px widths. Th
 
 Before a public mobile release, repeat this short real-device pass:
 
-| Device/browser | Sign in | Home/lobby/friends/account | Create/join/QR | Live match/reconnect | Result/review |
+| Device/browser | Sign in | Home/lobby/friends/account | Create/join by code | Live match/reconnect | Result/review |
 | --- | --- | --- | --- | --- | --- |
 | Android Chrome | required | required | required | required | required |
 | Android WeChat browser | required | required | required | required | required |
@@ -15,6 +15,6 @@ For each live-match pass, use two accounts on different devices. Close one page 
 
 Run the automated matrix on port 3000:
 
-```powershell
+```bash
 npm run test:e2e
 ```

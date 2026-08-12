@@ -202,6 +202,58 @@ export const appSchemaMigrations = sqliteTable("app_schema_migrations", {
   appliedAt: integer("applied_at").notNull(),
 });
 
+export const betaSettings = sqliteTable("beta_settings", {
+  id: text("id").primaryKey(),
+  programName: text("program_name").notNull(),
+  notice: text("notice").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const betaInvites = sqliteTable("beta_invites", {
+  id: text("id").primaryKey(),
+  code: text("code").notNull(),
+  label: text("label").notNull(),
+  maxUses: integer("max_uses").notNull().default(0),
+  uses: integer("uses").notNull().default(0),
+  enabled: integer("enabled").notNull().default(1),
+  expiresAt: integer("expires_at"),
+  createdBy: text("created_by"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("beta_invites_code_unique").on(table.code),
+  index("beta_invites_active_idx").on(table.enabled, table.expiresAt, table.createdAt),
+]);
+
+export const betaInviteClaims = sqliteTable("beta_invite_claims", {
+  id: text("id").primaryKey(),
+  inviteId: text("invite_id").notNull(),
+  userId: text("user_id").notNull(),
+  claimedAt: integer("claimed_at").notNull(),
+}, (table) => [
+  uniqueIndex("beta_invite_claims_user_unique").on(table.userId),
+  index("beta_invite_claims_invite_idx").on(table.inviteId, table.claimedAt),
+]);
+
+export const betaFeedback = sqliteTable("beta_feedback", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  pageContext: text("page_context").notNull().default(""),
+  status: text("status").notNull().default("open"),
+  adminNote: text("admin_note").notNull().default(""),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: integer("reviewed_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  index("beta_feedback_status_idx").on(table.status, table.createdAt),
+  index("beta_feedback_user_idx").on(table.userId, table.createdAt),
+]);
+
 export const matchEvents = sqliteTable("match_events", {
   id: text("id").primaryKey(),
   roomId: text("room_id"),
@@ -272,6 +324,28 @@ export const savedGameRecords = sqliteTable("saved_game_records", {
   uniqueIndex("saved_game_records_user_source_unique").on(table.userId, table.sourceRecordId),
 ]);
 
+export const rankSeasons = sqliteTable("rank_seasons", {
+  id: text("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  summary: text("summary").notNull().default(""),
+  status: text("status").notNull().default("draft"),
+  startsAt: integer("starts_at").notNull(),
+  endsAt: integer("ends_at").notNull(),
+  goEnabled: integer("go_enabled", { mode: "boolean" }).notNull().default(true),
+  gomokuEnabled: integer("gomoku_enabled", { mode: "boolean" }).notNull().default(true),
+  carryPercent: integer("carry_percent").notNull().default(0),
+  createdBy: text("created_by"),
+  activatedBy: text("activated_by"),
+  closedBy: text("closed_by"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  activatedAt: integer("activated_at"),
+  closedAt: integer("closed_at"),
+}, (table) => [
+  index("rank_seasons_status_idx").on(table.status, table.startsAt),
+]);
+
 export const rankProfiles = sqliteTable("rank_profiles", {
   userId: text("user_id").notNull(),
   game: text("game").notNull(),
@@ -292,15 +366,17 @@ export const rankedQueue = sqliteTable("ranked_queue", {
   userId: text("user_id").primaryKey(),
   roomId: text("room_id").notNull(),
   playerId: text("player_id").notNull(),
+  seasonId: text("season_id"),
   game: text("game").notNull(),
   boardSize: integer("board_size").notNull(),
   rating: integer("rating").notNull(),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-}, (table) => [index("ranked_queue_match_idx").on(table.game, table.boardSize, table.rating, table.createdAt)]);
+}, (table) => [index("ranked_queue_season_match_idx").on(table.seasonId, table.game, table.boardSize, table.rating, table.createdAt)]);
 
 export const rankMatches = sqliteTable("rank_matches", {
   roomId: text("room_id").primaryKey(),
+  seasonId: text("season_id"),
   game: text("game").notNull(),
   blackUserId: text("black_user_id").notNull(),
   whiteUserId: text("white_user_id").notNull(),
@@ -314,4 +390,93 @@ export const rankMatches = sqliteTable("rank_matches", {
   status: text("status").notNull(),
   createdAt: integer("created_at").notNull(),
   settledAt: integer("settled_at"),
-}, (table) => [index("rank_matches_players_idx").on(table.blackUserId, table.whiteUserId, table.status)]);
+}, (table) => [
+  index("rank_matches_players_idx").on(table.blackUserId, table.whiteUserId, table.status),
+  index("rank_matches_season_idx").on(table.seasonId, table.game, table.status, table.createdAt),
+]);
+
+export const rankCorrections = sqliteTable("rank_corrections", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull(),
+  game: text("game").notNull(),
+  blackUserId: text("black_user_id").notNull(),
+  whiteUserId: text("white_user_id").notNull(),
+  blackDelta: integer("black_delta").notNull(),
+  whiteDelta: integer("white_delta").notNull(),
+  reason: text("reason").notNull(),
+  adminUserId: text("admin_user_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("rank_corrections_room_unique").on(table.roomId),
+  index("rank_corrections_created_idx").on(table.createdAt),
+]);
+
+export const rankSeasonStandings = sqliteTable("rank_season_standings", {
+  seasonId: text("season_id").notNull(),
+  userId: text("user_id").notNull(),
+  game: text("game").notNull(),
+  position: integer("position").notNull(),
+  rating: integer("rating").notNull(),
+  peakRating: integer("peak_rating").notNull(),
+  wins: integer("wins").notNull(),
+  losses: integer("losses").notNull(),
+  draws: integer("draws").notNull(),
+  streak: integer("streak").notNull(),
+  matches: integer("matches").notNull(),
+  snapshotAt: integer("snapshot_at").notNull(),
+}, (table) => [
+  uniqueIndex("rank_season_standings_profile_unique").on(table.seasonId, table.userId, table.game),
+  index("rank_season_standings_board_idx").on(table.seasonId, table.game, table.position),
+]);
+
+export const policyDocuments = sqliteTable("policy_documents", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  version: integer("version").notNull(),
+  title: text("title").notNull(),
+  summary: text("summary").notNull().default(""),
+  body: text("body").notNull(),
+  status: text("status").notNull().default("draft"),
+  material: integer("material", { mode: "boolean" }).notNull().default(false),
+  publishedBy: text("published_by"),
+  publishedAt: integer("published_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("policy_documents_kind_version_unique").on(table.kind, table.version),
+  index("policy_documents_public_idx").on(table.kind, table.status, table.publishedAt),
+]);
+
+export const policyAcceptances = sqliteTable("policy_acceptances", {
+  userId: text("user_id").notNull(),
+  documentId: text("document_id").notNull(),
+  acceptedAt: integer("accepted_at").notNull(),
+}, (table) => [
+  uniqueIndex("policy_acceptances_user_document_unique").on(table.userId, table.documentId),
+  index("policy_acceptances_user_idx").on(table.userId, table.acceptedAt),
+]);
+
+export const featureFlags = sqliteTable("feature_flags", {
+  key: text("key").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  updatedBy: text("updated_by"),
+  reason: text("reason").notNull().default(""),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const userNotifications = sqliteTable("user_notifications", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  actorUserId: text("actor_user_id"),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  dedupeKey: text("dedupe_key"),
+  readAt: integer("read_at"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  index("user_notifications_user_idx").on(table.userId, table.createdAt),
+  uniqueIndex("user_notifications_dedupe_unique").on(table.userId, table.dedupeKey),
+]);

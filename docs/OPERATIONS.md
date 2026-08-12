@@ -2,14 +2,18 @@
 
 This document is for the deployment agent and server operator. Development changes should keep these checks valid even when the hosting provider changes.
 
+For Linux service installation and systemd examples, read
+[`LINUX_DEPLOYMENT.md`](LINUX_DEPLOYMENT.md).
+
 ## Release Gate
 
 Run these before every release:
 
-```powershell
+```bash
 npm ci
 npm run lint
 npm test
+npm run verify:linux
 ```
 
 The release is blocked by any build, lint, rule-engine, rendered-HTML, or API integration failure. Deploy the exact tested Git commit, not an uncommitted workspace.
@@ -22,7 +26,12 @@ The release is blocked by any build, lint, rule-engine, rendered-HTML, or API in
 - `PLATFORM_HUB`: `PlatformHub` Durable Object.
 - `MICO_ADMIN_PUBLIC_IDS`: comma-separated `MG-...` player IDs that may open channel management.
 
-The application records completed schema versions in `app_schema_migrations`. `/api/health` must report database versions `1` and `2` after startup.
+The application records completed schema versions in `app_schema_migrations`.
+`/api/health` must report database versions `1` through `11` after startup.
+
+Rank season lifecycle is operated from `/admin` by a `super_admin`. Use the
+staged close workflow in `RANK_SEASON_OPERATIONS.md`; never edit the current
+season or reset ratings with ad-hoc SQL.
 
 ## Health And Alerts
 
@@ -41,22 +50,28 @@ Use `npm run ai:supervised` to run both engines with restart and exponential bac
 
 Create a remote D1 export before schema or application releases:
 
+```bash
+MICO_D1_DATABASE="production-database-name" npm run ops:backup
+```
+
+The equivalent PowerShell invocation is:
+
 ```powershell
 $env:MICO_D1_DATABASE="production-database-name"
-./scripts/backup-d1.ps1
+npm run ops:backup
 ```
 
 Back up R2 avatars through an `rclone` S3 remote configured for the Cloudflare account:
 
-```powershell
-./scripts/backup-r2.ps1 -Remote cloudflare-r2 -Bucket production-avatars
+```bash
+npm run ops:backup:r2 -- --remote cloudflare-r2 --bucket production-avatars
 ```
 
-Store both backups outside the application server and retain at least seven daily and four weekly copies. A D1 backup does not include avatars. Restore scripts require an explicit `-ConfirmRestore` switch and use copy semantics so they do not delete newer destination objects:
+Store both backups outside the application server and retain at least seven daily and four weekly copies. A D1 backup does not include avatars. Restore scripts require an explicit `--confirm-restore` flag and use copy semantics so they do not delete newer destination objects:
 
-```powershell
-./scripts/restore-d1.ps1 -Database production-database-name -BackupFile ./backup.sql -ConfirmRestore
-./scripts/restore-r2.ps1 -Remote cloudflare-r2 -Bucket production-avatars -BackupDirectory ./avatar-backup -ConfirmRestore
+```bash
+npm run ops:restore -- --database production-database-name --file ./backup.sql --confirm-restore
+npm run ops:restore:r2 -- --remote cloudflare-r2 --bucket production-avatars --directory ./avatar-backup --confirm-restore
 ```
 
 ## Rollback

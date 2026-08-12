@@ -1,10 +1,11 @@
 import { getD1 } from "../../../db";
-import { avatarUrlForKey, getSessionUser } from "../../../lib/auth";
+import { avatarUrlForKey, getSessionUser, normalizeUsernameKey } from "../../../lib/auth";
 import {
   cleanCommentBody,
   cleanPostBody,
   cleanPostTitle,
   discussionCategory,
+  extractDiscussionMentions,
   postAttachment,
   type AnnouncementRow,
   type DiscussionPostRow,
@@ -13,6 +14,7 @@ import {
 import { ensureAppSchema } from "../../../lib/database-migrations";
 import { activeSanction } from "../../../lib/moderation";
 import { notifyPlatform } from "../../../lib/platform-realtime";
+import { createNotification } from "../../../lib/notifications";
 import { consumeRateLimit, rateLimitResponse } from "../../../lib/rate-limit";
 
 type CommentRow = {
@@ -30,6 +32,40 @@ type CommentRow = {
 
 function fail(code: string, message: string, status: number) {
   return Response.json({ error: { code, message } }, { status });
+}
+
+async function notifyMentions(d1: ReturnType<typeof getD1>, input: {
+  actorId: string;
+  actorName: string;
+  content: string;
+  postId: string;
+  sourceId: string;
+  excluded?: string[];
+}) {
+  const tokens = extractDiscussionMentions(input.content);
+  if (!tokens.length) return [];
+  const placeholders = tokens.map(() => "?").join(", ");
+  const usernameKeys = tokens.map(normalizeUsernameKey);
+  const publicIds = tokens.map((token) => token.toUpperCase());
+  const users = await d1.prepare(`SELECT id FROM users WHERE username_key IN (${placeholders}) OR UPPER(public_id) IN (${placeholders})`)
+    .bind(...usernameKeys, ...publicIds).all<{ id: string }>();
+  const excluded = new Set([input.actorId, ...(input.excluded ?? [])]);
+  const notified: string[] = [];
+  for (const target of users.results) {
+    if (excluded.has(target.id)) continue;
+    const created = await createNotification(d1, {
+      userId: target.id,
+      kind: "community_reply",
+      title: "有人在讨论中提到了你",
+      message: `${input.actorName}：${input.content}`,
+      actorUserId: input.actorId,
+      entityType: "discussion_post",
+      entityId: input.postId,
+      dedupeKey: `community-mention:${input.sourceId}:${target.id}`,
+    });
+    if (created) notified.push(target.id);
+  }
+  return notified;
 }
 
 async function prepare(request: Request) {
@@ -149,6 +185,7 @@ export async function GET(request: Request) {
     const category = url.searchParams.get("category");
     const favoritesOnly = url.searchParams.get("favorites") === "1";
     const sort = url.searchParams.get("sort") === "hot" ? "hot" : "latest";
+    const search = Array.from((url.searchParams.get("q") ?? "").normalize("NFKC").trim()).slice(0, 40).join("");
     const clauses = ["p.status = 'visible'"];
     const values: unknown[] = [user.id, user.id];
     if (category && category !== "all") {
@@ -158,6 +195,11 @@ export async function GET(request: Request) {
     if (favoritesOnly) {
       clauses.push("EXISTS(SELECT 1 FROM discussion_reactions fr WHERE fr.post_id = p.id AND fr.user_id = ? AND fr.kind = 'favorite')");
       values.push(user.id);
+    }
+    if (search) {
+      clauses.push("(p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\' OR u.display_name LIKE ? ESCAPE '\\' OR u.public_id LIKE ? ESCAPE '\\')");
+      const pattern = `%${search.replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
+      values.push(pattern, pattern, pattern, pattern);
     }
     const order = sort === "hot"
       ? "p.pinned DESC, (likes * 3 + comments * 2) DESC, p.updated_at DESC"
@@ -215,7 +257,9 @@ export async function POST(request: Request) {
           id, user_id, category, title, body, attachment_json, status, pinned, featured, locked, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, 'visible', 0, 0, 0, ?, ?)`)
         .bind(id, user.id, discussionCategory(payload.category), title, body, attachmentJson, now, now).run();
+      const mentioned = await notifyMentions(d1, { actorId: user.id, actorName: user.displayName, content: `${title}\n${body}`, postId: id, sourceId: id });
       await notifyPlatform({ type: "community_updated" });
+      if (mentioned.length) await notifyPlatform({ type: "notifications_updated", userIds: mentioned });
       return Response.json({ created: true, id }, { status: 201 });
     }
 
@@ -225,20 +269,26 @@ export async function POST(request: Request) {
       if (!limit.allowed) return rateLimitResponse(limit, "评论发送太频繁，请稍后再试");
       const body = cleanCommentBody(payload.body);
       if (!body) return fail("empty_comment", "评论不能为空", 400);
-      const post = await d1.prepare("SELECT id, locked FROM discussion_posts WHERE id = ? AND status = 'visible'").bind(payload.postId ?? "").first<{ id: string; locked: number }>();
+      const post = await d1.prepare("SELECT id, user_id, title, locked FROM discussion_posts WHERE id = ? AND status = 'visible'").bind(payload.postId ?? "").first<{ id: string; user_id: string; title: string; locked: number }>();
       if (!post) return fail("post_not_found", "帖子已经不存在", 404);
       if (post.locked) return fail("post_locked", "这篇帖子已经停止评论", 409);
       let parentId: string | null = null;
+      let notificationTarget = post.user_id;
       if (payload.parentId) {
-        const parent = await d1.prepare("SELECT id FROM discussion_comments WHERE id = ? AND post_id = ? AND status = 'visible'").bind(payload.parentId, post.id).first<{ id: string }>();
+        const parent = await d1.prepare("SELECT id, user_id FROM discussion_comments WHERE id = ? AND post_id = ? AND status = 'visible'").bind(payload.parentId, post.id).first<{ id: string; user_id: string }>();
         if (!parent) return fail("parent_not_found", "回复的评论已经不存在", 404);
         parentId = parent.id;
+        notificationTarget = parent.user_id;
       }
       const id = crypto.randomUUID();
       await d1.prepare("INSERT INTO discussion_comments (id, post_id, user_id, parent_id, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'visible', ?, ?)")
         .bind(id, post.id, user.id, parentId, body, now, now).run();
       await d1.prepare("UPDATE discussion_posts SET updated_at = ? WHERE id = ?").bind(now, post.id).run();
+      const created = await createNotification(d1, { userId: notificationTarget, kind: "community_reply", title: parentId ? "有人回复了你的评论" : "你的帖子有新评论", message: `${user.displayName}：${body}`, actorUserId: user.id, entityType: "discussion_post", entityId: post.id, dedupeKey: `community-reply:${id}` });
+      const mentioned = await notifyMentions(d1, { actorId: user.id, actorName: user.displayName, content: body, postId: post.id, sourceId: id, excluded: [notificationTarget] });
       await notifyPlatform({ type: "community_updated" });
+      const notificationUsers = [...new Set([...(created ? [notificationTarget] : []), ...mentioned])];
+      if (notificationUsers.length) await notifyPlatform({ type: "notifications_updated", userIds: notificationUsers });
       return Response.json({ created: true, id }, { status: 201 });
     }
 
