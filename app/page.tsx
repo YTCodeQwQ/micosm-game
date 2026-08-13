@@ -593,6 +593,8 @@ export default function HomePage() {
   const [rankedGame, setRankedGame] = useState<RankGame>("go");
   const [rankData, setRankData] = useState<RankData | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
+  const [rankBoardOpen, setRankBoardOpen] = useState(false);
+  const [rankPlayerOpen, setRankPlayerOpen] = useState<RankLeaderboardEntry | null>(null);
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([]);
   const [savedHistoryRecords, setSavedHistoryRecords] = useState<SavedHistoryRecord[]>([]);
   const [historyTab, setHistoryTab] = useState<HistoryTab>("recent");
@@ -1255,6 +1257,8 @@ export default function HomePage() {
       }
       else if (outcome) return;
       else if (aiSetupOpen) setAiSetupOpen(false);
+      else if (rankPlayerOpen) setRankPlayerOpen(null);
+      else if (rankBoardOpen) setRankBoardOpen(false);
       else if (policyCenterOpen) setPolicyCenterOpen(false);
       else if (settingsOpen) setSettingsOpen(false);
       else if (profileOpen) setProfileOpen(false);
@@ -1268,7 +1272,7 @@ export default function HomePage() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [accountOpen, aiSetupOpen, chatOpen, confirmIntent, feedbackOpen, friendConfirm, friendPanelOpen, libraryMenuOpen, moderationOpen, notificationOpen, outcome, policyCenterOpen, profileOpen, review, settingsOpen]);
+  }, [accountOpen, aiSetupOpen, chatOpen, confirmIntent, feedbackOpen, friendConfirm, friendPanelOpen, libraryMenuOpen, moderationOpen, notificationOpen, outcome, policyCenterOpen, profileOpen, rankBoardOpen, rankPlayerOpen, review, settingsOpen]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1453,6 +1457,12 @@ export default function HomePage() {
     setNotificationOpen(false);
     setAccountOpen(false);
     setLibraryMenuOpen(false);
+  }
+
+  function changeRankedGame(game: RankGame) {
+    setRankedGame(game);
+    setRankPlayerOpen(null);
+    setRankData((current) => current ? { ...current, leaderboard: [] } : current);
   }
 
   function openCommunity(section: "discussion" | "announcements" = "discussion") {
@@ -1779,6 +1789,21 @@ export default function HomePage() {
     setHistoryReview(null);
     setHistoryTab("recent");
     setMainView("history");
+  }
+
+  function rankPlayerRelationship(entry: RankLeaderboardEntry): FriendSearchResult["relationship"] | "self" {
+    if (entry.isMe || entry.userId === authUser?.id) return "self";
+    if (friendsData.friends.some((person) => person.id === entry.userId)) return "friend";
+    if (friendsData.incomingRequests.some((person) => person.id === entry.userId)) return "incoming";
+    if (friendsData.outgoingRequests.some((person) => person.id === entry.userId)) return "outgoing";
+    if (friendsData.blocked.some((person) => person.id === entry.userId)) return "blocked";
+    return "none";
+  }
+
+  function messageRankPlayer(entry: RankLeaderboardEntry) {
+    setRankPlayerOpen(null);
+    setRankBoardOpen(false);
+    openChat("direct", { id: entry.userId, publicId: entry.publicId, displayName: entry.displayName, avatarUrl: entry.avatarUrl, signature: entry.signature, online: false });
   }
 
   async function refreshMatchChat() {
@@ -2603,7 +2628,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${!room && mainView === "games" ? "lobby-home-active" : ""} ${mainView === "community" ? "community-view-active" : ""} ${mainView === "community" && communityLiveOpen ? "community-live-page-active" : ""} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""} ${!room && chatOpen && chatChannel === "world" ? "mobile-world-page-open" : ""} ${!room && friendPanelOpen ? "mobile-friends-page-open" : ""} ${!room && accountOpen ? "mobile-account-page-open" : ""}`}>
+    <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${!room && mainView === "games" ? "lobby-home-active" : ""} ${mainView === "ranked" ? "ranked-view-active" : ""} ${mainView === "community" ? "community-view-active" : ""} ${mainView === "community" && communityLiveOpen ? "community-live-page-active" : ""} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""} ${!room && chatOpen && chatChannel === "world" ? "mobile-world-page-open" : ""} ${!room && friendPanelOpen ? "mobile-friends-page-open" : ""} ${!room && accountOpen ? "mobile-account-page-open" : ""}`}>
       <header className="glass topbar">
         <div className="brand">
           <span className="brand-icon"><Image src="/micosm-logo.webp" alt="" width={34} height={34} priority unoptimized /></span>
@@ -3192,7 +3217,9 @@ export default function HomePage() {
           busy={rankBusy}
           data={rankData}
           game={rankedGame}
-          onGameChange={setRankedGame}
+          onGameChange={changeRankedGame}
+          onOpenBoard={() => setRankBoardOpen(true)}
+          onOpenPlayer={setRankPlayerOpen}
           onStart={() => void startRanked()}
           user={authUser}
         />
@@ -3200,6 +3227,29 @@ export default function HomePage() {
         <StoryMode user={authUser} />
       )}
       </div>
+
+      {rankBoardOpen && rankData && (
+        <RankLeaderboardDialog
+          data={rankData}
+          game={rankedGame}
+          onClose={() => setRankBoardOpen(false)}
+          onGameChange={changeRankedGame}
+          onOpenPlayer={setRankPlayerOpen}
+        />
+      )}
+
+      {rankPlayerOpen && (
+        <RankPlayerDialog
+          busy={Boolean(friendBusy)}
+          entry={rankPlayerOpen}
+          game={rankedGame}
+          onAddFriend={() => void friendAction("sendRequest", rankPlayerOpen.userId, "好友申请已发送")}
+          onClose={() => setRankPlayerOpen(null)}
+          onMessage={() => messageRankPlayer(rankPlayerOpen)}
+          relationship={rankPlayerRelationship(rankPlayerOpen)}
+          seasonName={rankData?.season?.name ?? "当前赛季"}
+        />
+      )}
 
       {room && room.mode !== "ai" && matchChatOpen && (
         <MatchChatPanel
@@ -4071,11 +4121,119 @@ function StoryMode({ user }: { user: AuthUser | null }) {
   );
 }
 
-function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
+function RankLeaderboardDialog({ data, game, onClose, onGameChange, onOpenPlayer }: {
+  data: RankData;
+  game: RankGame;
+  onClose: () => void;
+  onGameChange: (game: RankGame) => void;
+  onOpenPlayer: (entry: RankLeaderboardEntry) => void;
+}) {
+  const profile = data.profiles[game];
+  const leaders = data.leaderboard;
+  const podium = [leaders[1], leaders[0], leaders[2]].filter(Boolean) as RankLeaderboardEntry[];
+  return (
+    <div className="rank-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section aria-labelledby="rank-leaderboard-dialog-title" aria-modal="true" className="rank-leaderboard-dialog" role="dialog">
+        <header className="rank-dialog-header">
+          <div><small>SEASON LEADERBOARD</small><h2 id="rank-leaderboard-dialog-title">完整排位榜</h2><p>{data.season?.name ?? "当前赛季"} · 前 50 名棋手</p></div>
+          <button aria-label="关闭完整排行榜" onClick={onClose} type="button"><X size={20} /></button>
+        </header>
+        <div className="rank-dialog-game-tabs" role="tablist">
+          <button aria-selected={game === "go"} className={game === "go" ? "active" : ""} onClick={() => onGameChange("go")} role="tab" type="button"><CircleDot size={17} />围棋榜</button>
+          <button aria-selected={game === "gomoku"} className={game === "gomoku" ? "active" : ""} onClick={() => onGameChange("gomoku")} role="tab" type="button"><Gamepad2 size={17} />五子棋榜</button>
+        </div>
+        {podium.length > 0 ? (
+          <div className="rank-podium" aria-label="排行榜前三名">
+            {podium.map((entry) => (
+              <button className={`place-${entry.position}`} key={entry.userId} onClick={() => onOpenPlayer(entry)} type="button">
+                <i>{entry.position}</i>
+                <UserAvatar name={entry.displayName} src={entry.avatarUrl} />
+                <strong>{entry.displayName}</strong>
+                <span>{entry.label}</span>
+                <b>{entry.rating}</b>
+              </button>
+            ))}
+          </div>
+        ) : <div className="rank-dialog-empty"><Trophy size={28} /><strong>等待本赛季首场排位</strong><p>完成排位后，棋手会出现在这里。</p></div>}
+        <div className="rank-dialog-self">
+          <span>{data.position ? `#${data.position}` : "--"}</span>
+          <div><small>MY POSITION</small><strong>我的排名</strong><p>{profile?.label ?? "尘星"} · {profile?.matches ?? 0} 场排位</p></div>
+          <b>{profile?.rating ?? 0}<small>星分</small></b>
+        </div>
+        <div className="rank-dialog-table">
+          <header><span>名次</span><span>棋手</span><span>段位</span><span>战绩</span><span>胜率</span><span>星分</span></header>
+          <div>
+            {leaders.map((entry) => {
+              const winRate = entry.matches ? Math.round(entry.wins / entry.matches * 100) : 0;
+              return (
+                <button className={entry.isMe ? "is-me" : ""} key={entry.userId} onClick={() => onOpenPlayer(entry)} type="button">
+                  <b>{entry.position}</b>
+                  <span className="rank-dialog-player"><UserAvatar name={entry.displayName} src={entry.avatarUrl} /><span><strong>{entry.displayName}</strong><small>{entry.publicId || "暂无棋手 ID"}</small></span></span>
+                  <span className="rank-dialog-tier"><i><RankEmblemArt index={Math.min(RANK_NAMES.length - 1, Math.floor(entry.rating / 100))} /></i><strong>{entry.label}</strong></span>
+                  <span>{entry.wins} 胜 {entry.losses} 负</span>
+                  <span>{winRate}%</span>
+                  <em>{entry.rating}</em>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RankPlayerDialog({ busy, entry, game, onAddFriend, onClose, onMessage, relationship, seasonName }: {
+  busy: boolean;
+  entry: RankLeaderboardEntry;
+  game: RankGame;
+  onAddFriend: () => void;
+  onClose: () => void;
+  onMessage: () => void;
+  relationship: FriendSearchResult["relationship"] | "self";
+  seasonName: string;
+}) {
+  const winRate = entry.matches ? Math.round(entry.wins / entry.matches * 100) : 0;
+  const draws = Math.max(0, entry.matches - entry.wins - entry.losses);
+  const tierIndex = Math.min(RANK_NAMES.length - 1, Math.floor(entry.rating / 100));
+  const progress = entry.rating >= 700 ? entry.rating % 20 / 20 * 100 : entry.rating % 100;
+  const addLabel = relationship === "incoming" ? "同意好友申请" : relationship === "outgoing" ? "申请已发送" : relationship === "blocked" ? "已被你屏蔽" : "添加好友";
+  return (
+    <div className="rank-dialog-backdrop rank-player-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section aria-labelledby="rank-player-title" aria-modal="true" className="rank-player-dialog" role="dialog">
+        <button aria-label="关闭棋手档案" className="rank-player-close" onClick={onClose} type="button"><X size={19} /></button>
+        <div className="rank-player-hero">
+          <small>RANKED PLAYER</small>
+          <span className="rank-player-avatar"><UserAvatar name={entry.displayName} src={entry.avatarUrl} /></span>
+          <div><h2 id="rank-player-title">{entry.displayName}</h2><strong>{entry.publicId || "暂无棋手 ID"}</strong><p>{entry.signature || "这位棋手还没有留下个性签名。"}</p></div>
+          <span className="rank-player-position">#{entry.position}<small>{game === "go" ? "围棋榜" : "五子棋榜"}</small></span>
+        </div>
+        <div className="rank-player-rank">
+          <span className={`rank-emblem tier-${tierIndex}`}><span><RankEmblemArt eager index={tierIndex} /></span></span>
+          <div><small>{seasonName}</small><h3>{entry.label}</h3><p><strong>{entry.rating}</strong> 星分</p><span><i style={{ width: `${progress}%` }} /></span></div>
+        </div>
+        <div className="rank-player-stats">
+          <div><small>赛季场次</small><strong>{entry.matches}</strong></div>
+          <div><small>胜率</small><strong>{winRate}%</strong></div>
+          <div><small>胜负</small><strong>{entry.wins} / {entry.losses}</strong></div>
+          <div><small>和棋</small><strong>{draws}</strong></div>
+        </div>
+        <footer>
+          {relationship === "self" ? <span><ShieldCheck size={17} />这是你的排位档案</span> : relationship === "friend" ? <button className="primary" onClick={onMessage} type="button"><MessageCircle size={17} />发送消息</button> : <button className="primary" disabled={busy || relationship === "outgoing" || relationship === "blocked" || relationship === "blocked_by_other"} onClick={onAddFriend} type="button">{busy ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}{addLabel}</button>}
+          <button onClick={onClose} type="button">返回榜单</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function RankedLobby({ busy, data, game, onGameChange, onOpenBoard, onOpenPlayer, onStart, user }: {
   busy: boolean;
   data: RankData | null;
   game: RankGame;
   onGameChange: (game: RankGame) => void;
+  onOpenBoard: () => void;
+  onOpenPlayer: (entry: RankLeaderboardEntry) => void;
   onStart: () => void;
   user: AuthUser | null;
 }) {
@@ -4117,29 +4275,32 @@ function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
           <span>{game === "go" ? "19 路" : "15 路"}</span>
         </div>
 
+        <div className="rank-profile-summary">
+          <div className={`rank-emblem tier-${tierIndex}`} aria-label={`当前段位 ${profile?.label ?? "尘星"}`} title={RANK_MOTTO[tierIndex]}>
+            <span><RankEmblemArt eager index={tierIndex} /></span>
+          </div>
+          <div className="rank-profile-copy">
+            <div className="rank-current">
+              <small>当前段位</small>
+              <h2>{profile?.label ?? "尘星"}</h2>
+              <p><strong>{rating}</strong> 星分 · 胜利基础 +{baseWin}</p>
+            </div>
+            <div className="rank-progress" aria-label={`段位进度 ${progress}%`}>
+              <span><i style={{ width: `${progress}%` }} /></span>
+              <small>{profile ? `${profile.progress.current} / ${profile.progress.required}` : "正在读取"}</small>
+            </div>
+          </div>
+          <div className="rank-stats">
+            <div><span>胜率</span><strong>{winRate}%</strong></div>
+            <div><span>战绩</span><strong>{profile ? `${profile.wins}胜 ${profile.losses}负` : "--"}</strong></div>
+            <div><span>连胜</span><strong>{profile?.streak ?? 0}</strong></div>
+            <div><span>排名</span><strong>{data?.position ? `#${data.position}` : "未上榜"}</strong></div>
+          </div>
+        </div>
         <button className="rank-start" disabled={busy || !profile || !data?.seasonPlayable} onClick={onStart} type="button">
           {busy ? <LoaderCircle className="spin" size={19} /> : data?.seasonPlayable ? <Search size={19} /> : <Clock3 size={19} />}{data?.seasonPlayable ? `开始${game === "go" ? "围棋" : "五子棋"}排位` : data?.seasonReason || "排位暂未开放"}
           <span>{data?.seasonPlayable ? "随机执色" : seasonStatus}</span>
         </button>
-
-        <div className={`rank-emblem tier-${tierIndex}`} aria-label={`当前段位 ${profile?.label ?? "尘星"}`} title={RANK_MOTTO[tierIndex]}>
-          <span><RankEmblemArt eager index={tierIndex} /></span>
-        </div>
-        <div className="rank-current">
-          <small>当前段位</small>
-          <h2>{profile?.label ?? "尘星"}</h2>
-          <p><strong>{rating}</strong> 星分 · 胜利基础 +{baseWin}</p>
-        </div>
-        <div className="rank-progress" aria-label={`段位进度 ${progress}%`}>
-          <span><i style={{ width: `${progress}%` }} /></span>
-          <small>{profile ? `${profile.progress.current} / ${profile.progress.required}` : "正在读取"}</small>
-        </div>
-        <div className="rank-stats">
-          <div><span>胜率</span><strong>{winRate}%</strong></div>
-          <div><span>战绩</span><strong>{profile ? `${profile.wins}胜 ${profile.losses}负` : "--"}</strong></div>
-          <div><span>连胜</span><strong>{profile?.streak ?? 0}</strong></div>
-          <div><span>排名</span><strong>{data?.position ? `#${data.position}` : "未上榜"}</strong></div>
-        </div>
       </section>
 
       <section className="glass rank-path" aria-labelledby="rank-path-title">
@@ -4165,20 +4326,22 @@ function RankedLobby({ busy, data, game, onGameChange, onStart, user }: {
       </section>
 
       <aside className="glass rank-board" aria-labelledby="rank-board-title">
-        <header><div><span>LEADERBOARD</span><h2 id="rank-board-title">{game === "go" ? "围棋" : "五子棋"}榜</h2></div><small>前 50 名</small></header>
+        <header><div><span>LEADERBOARD</span><h2 id="rank-board-title">{game === "go" ? "围棋" : "五子棋"}榜</h2></div><button className="rank-board-expand" onClick={onOpenBoard} type="button">完整榜单<ChevronRight size={15} /></button></header>
+        <div className="rank-board-self"><span>{data?.position ? `#${data.position}` : "--"}</span><div><strong>我的榜位</strong><small>{profile?.label ?? "尘星"} · {profile?.matches ?? 0} 场排位</small></div><b>{rating}</b></div>
         <div className="rank-board-list">
           {leaderboard.length === 0 ? (
             <div className="rank-empty"><Trophy size={23} /><strong>等待首场排位</strong><p>完成一局后即可进入榜单。</p></div>
-          ) : leaderboard.map((entry) => (
-            <div className={entry.isMe ? "is-me" : ""} key={entry.userId}>
+          ) : leaderboard.slice(0, 10).map((entry) => (
+            <button className={entry.isMe ? "is-me" : ""} key={entry.userId} onClick={() => onOpenPlayer(entry)} type="button">
               <b>{entry.position}</b>
               <UserAvatar name={entry.displayName} src={entry.avatarUrl} />
               <span className="leaderboard-rank-art" title={entry.label}><RankEmblemArt index={Math.min(RANK_NAMES.length - 1, Math.floor(entry.rating / 100))} /></span>
               <span><strong>{entry.displayName}</strong><small>{entry.label} · {entry.wins}胜</small></span>
               <em>{entry.rating}</em>
-            </div>
+            </button>
           ))}
         </div>
+        {leaderboard.length > 0 && <button className="rank-board-more" onClick={onOpenBoard} type="button"><Trophy size={15} />查看完整前 50 名<ChevronRight size={15} /></button>}
       </aside>
     </div>
   );
