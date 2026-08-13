@@ -120,6 +120,7 @@ export const chatMessages = sqliteTable("chat_messages", {
   index("chat_messages_world_idx").on(table.channel, table.createdAt),
   index("chat_messages_hall_idx").on(table.channel, table.hall, table.createdAt),
   index("chat_messages_direct_idx").on(table.senderId, table.recipientId, table.createdAt),
+  index("chat_messages_match_idx").on(table.channel, table.roomId, table.createdAt),
 ]);
 
 export const chatReads = sqliteTable("chat_reads", {

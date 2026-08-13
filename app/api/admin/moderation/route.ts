@@ -38,6 +38,29 @@ type DiscussionReportRow = {
   reporter_name: string;
 };
 
+type ModerationHistoryRow = {
+  id: string;
+  action: string;
+  reason: string;
+  duration_ms: number | null;
+  created_at: number;
+  target_user_id: string | null;
+  target_name: string | null;
+  target_public_id: string | null;
+  admin_name: string;
+};
+
+const PERMANENT_SANCTION_UNTIL = 253_402_300_799_000;
+const SANCTION_CATEGORIES = new Set(["spam", "harassment", "cheating", "abuse", "account", "other"]);
+const SANCTION_CATEGORY_LABELS: Record<string, string> = {
+  spam: "垃圾信息",
+  harassment: "骚扰攻击",
+  cheating: "作弊破坏",
+  abuse: "违规内容",
+  account: "账号风险",
+  other: "其他原因",
+};
+
 function adminIds() {
   return configuredAdminIds((env as unknown as { MICO_ADMIN_PUBLIC_IDS?: string }).MICO_ADMIN_PUBLIC_IDS);
 }
@@ -77,8 +100,15 @@ export async function GET(request: Request) {
       WHERE COALESCE(s.muted_until, 0) > ? OR COALESCE(s.banned_until, 0) > ?
       ORDER BY s.updated_at DESC LIMIT 100`).bind(Date.now(), Date.now()).all<{
         user_id: string; muted_until: number | null; banned_until: number | null; reason: string; updated_at: number;
-        public_id: string | null; display_name: string; avatar_key: string | null;
-      }>();
+         public_id: string | null; display_name: string; avatar_key: string | null;
+       }>();
+    const history = await d1.prepare(`SELECT a.id, a.action, a.reason, a.duration_ms, a.created_at, a.target_user_id,
+        target.display_name AS target_name, target.public_id AS target_public_id, admin.display_name AS admin_name
+      FROM moderation_actions a
+      JOIN users admin ON admin.id = a.admin_user_id
+      LEFT JOIN users target ON target.id = a.target_user_id
+      WHERE a.action IN ('mute', 'ban', 'unmute', 'unban')
+      ORDER BY a.created_at DESC LIMIT 80`).all<ModerationHistoryRow>();
     return Response.json({
       reports: [...reports.results.map((row) => ({
         id: row.id,
@@ -118,8 +148,21 @@ export async function GET(request: Request) {
         avatarUrl: avatarUrlForKey(row.avatar_key),
         mutedUntil: row.muted_until,
         bannedUntil: row.banned_until,
+        mutePermanent: row.muted_until === PERMANENT_SANCTION_UNTIL,
+        banPermanent: row.banned_until === PERMANENT_SANCTION_UNTIL,
         reason: row.reason,
         updatedAt: row.updated_at,
+      })),
+      history: history.results.map((row) => ({
+        id: row.id,
+        action: row.action,
+        reason: row.reason,
+        durationMs: row.duration_ms,
+        createdAt: row.created_at,
+        targetUserId: row.target_user_id,
+        targetName: row.target_name ?? "未知用户",
+        targetPublicId: row.target_public_id ?? "",
+        adminName: row.admin_name,
       })),
     });
   } catch (caught) {
@@ -131,9 +174,6 @@ export async function POST(request: Request) {
   try {
     const d1 = getD1();
     await ensureAppSchema(d1);
-    const auth = await requireAdminPermission(request, d1, adminIds(), "reports.write");
-    if (auth.response || !auth.user) return auth.response ?? error("auth_required", "请先登录", 401);
-    await ensureCommunitySchema(d1);
     const payload = await request.json() as {
       action?: "dismiss" | "delete_message" | "mute" | "ban" | "unmute" | "unban";
       reportId?: string;
@@ -141,14 +181,23 @@ export async function POST(request: Request) {
       targetUserId?: string;
       reason?: string;
       durationMinutes?: number;
+      permanent?: boolean;
+      category?: string;
+      internalNote?: string;
     };
     const action = payload.action;
     if (!action || !["dismiss", "delete_message", "mute", "ban", "unmute", "unban"].includes(action)) {
       return error("invalid_action", "无法识别这个管理操作", 400);
     }
+    const sanctionAction = ["mute", "ban", "unmute", "unban"].includes(action);
+    const auth = await requireAdminPermission(request, d1, adminIds(), sanctionAction ? "users.sanction" : "reports.write");
+    if (auth.response || !auth.user) return auth.response ?? error("auth_required", "请先登录", 401);
+    await ensureCommunitySchema(d1);
     const now = Date.now();
-    const reason = typeof payload.reason === "string" ? payload.reason.trim().slice(0, 120) : "";
+    const reason = typeof payload.reason === "string" ? payload.reason.trim().slice(0, 160) : "";
     if (!reason) return error("reason_required", "请输入操作理由", 400);
+    const category = typeof payload.category === "string" && SANCTION_CATEGORIES.has(payload.category) ? payload.category : "";
+    const internalNote = typeof payload.internalNote === "string" ? payload.internalNote.trim().slice(0, 240) : "";
     let targetUserId = payload.targetUserId?.trim() || null;
     let messageId = payload.messageId?.trim() || null;
     let reportSource: "chat" | "community" = "chat";
@@ -194,17 +243,21 @@ export async function POST(request: Request) {
       }
     } else if (action === "mute" || action === "ban") {
       if (!targetUserId) return error("missing_user", "缺少目标用户", 400);
-      const durationMinutes = Math.max(1, Math.min(43_200, Math.round(Number(payload.durationMinutes) || (action === "mute" ? 10 : 1_440))));
-      durationMs = durationMinutes * 60_000;
-      const mutedUntil = action === "mute" ? now + durationMs : null;
-      const bannedUntil = action === "ban" ? now + durationMs : null;
+      const permanent = action === "ban" && payload.permanent === true;
+      const maxDurationMinutes = action === "mute" ? 43_200 : 525_600;
+      const durationMinutes = Math.max(1, Math.min(maxDurationMinutes, Math.round(Number(payload.durationMinutes) || (action === "mute" ? 10 : 1_440))));
+      durationMs = permanent ? null : durationMinutes * 60_000;
+      const expiresAt = permanent ? PERMANENT_SANCTION_UNTIL : now + durationMinutes * 60_000;
+      const mutedUntil = action === "mute" ? expiresAt : null;
+      const bannedUntil = action === "ban" ? expiresAt : null;
+      const sanctionReason = category ? `[${SANCTION_CATEGORY_LABELS[category]}] ${reason}` : reason;
       await d1.prepare(`INSERT INTO user_sanctions (user_id, muted_until, banned_until, reason, updated_by, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           muted_until = CASE WHEN excluded.muted_until IS NULL THEN user_sanctions.muted_until ELSE excluded.muted_until END,
           banned_until = CASE WHEN excluded.banned_until IS NULL THEN user_sanctions.banned_until ELSE excluded.banned_until END,
           reason = excluded.reason, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
-        .bind(targetUserId, mutedUntil, bannedUntil, reason, auth.user.id, now).run();
+        .bind(targetUserId, mutedUntil, bannedUntil, sanctionReason, auth.user.id, now).run();
       if (action === "ban") await d1.prepare("DELETE FROM user_sessions WHERE user_id = ?").bind(targetUserId).run();
       if (payload.reportId) {
         const table = reportSource === "community" ? "discussion_reports" : "chat_reports";
@@ -218,8 +271,9 @@ export async function POST(request: Request) {
         .bind(reason, auth.user.id, now, targetUserId).run();
     }
 
+    const auditReason = [category ? `[${SANCTION_CATEGORY_LABELS[category]}] ${reason}` : reason, internalNote ? `内部备注：${internalNote}` : ""].filter(Boolean).join(" · ");
     await d1.prepare(`INSERT INTO moderation_actions (id, admin_user_id, target_user_id, message_id, action, reason, duration_ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(crypto.randomUUID(), auth.user.id, targetUserId, messageId, action, reason, durationMs, now).run();
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(crypto.randomUUID(), auth.user.id, targetUserId, messageId, action, auditReason, durationMs, now).run();
     await writeAdminAudit(d1, {
       requestId: request.headers.get("x-request-id") ?? undefined,
       adminUserId: auth.user.id,
@@ -228,8 +282,8 @@ export async function POST(request: Request) {
       action,
       targetType: targetUserId ? "user" : messageId ? "message" : "report",
       targetId: targetUserId ?? messageId ?? payload.reportId ?? null,
-      reason,
-      after: { reportId: payload.reportId ?? null, durationMs },
+      reason: auditReason,
+      after: { reportId: payload.reportId ?? null, durationMs, permanent: payload.permanent === true, category: category || null },
     });
     await notifyPlatform({ type: "moderation_updated" });
     if (action === "delete_message") await notifyPlatform({ type: reportSource === "community" ? "community_updated" : "chat_updated" });

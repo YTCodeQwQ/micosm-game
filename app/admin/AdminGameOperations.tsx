@@ -68,6 +68,7 @@ export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, o
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState("");
   const [frameIndex, setFrameIndex] = useState(0);
+  const [followLive, setFollowLive] = useState(true);
 
   const loadMatches = useCallback(async () => {
     setBusy("matches");
@@ -98,10 +99,30 @@ export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, o
     setBusy(`detail:${roomId}`);
     try {
       const data = await requestJson<MatchDetail>(`/api/admin/matches?id=${encodeURIComponent(id ?? roomId)}`);
-      setDetail(data); setFrameIndex(0);
+      setDetail(data);
+      setFollowLive(data.kind === "live");
+      setFrameIndex(data.kind === "live" ? Number.MAX_SAFE_INTEGER : 0);
     } catch (caught) { onError(caught instanceof Error ? caught.message : "读取对局详情失败"); }
     finally { setBusy(""); }
   }
+
+  useEffect(() => {
+    if (tab !== "matches" || detail?.kind !== "live") return;
+    let disposed = false;
+    const roomId = detail.match.roomId;
+    const refresh = async () => {
+      try {
+        const data = await requestJson<MatchDetail>(`/api/admin/matches?id=${encodeURIComponent(roomId)}`);
+        if (disposed) return;
+        setDetail(data);
+        if (data.kind === "live" && followLive) setFrameIndex(Number.MAX_SAFE_INTEGER);
+      } catch {
+        // A finished room can briefly move from the live table to the archive table.
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 1_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [detail?.kind, detail?.match.roomId, followLive, tab]);
 
   async function reverseSettlement() {
     if (!reversing || !reason.trim()) return;
@@ -122,7 +143,7 @@ export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, o
 
     {tab === "matches" ? <div className={styles.gameOpsColumns}>
       <section className={styles.gameOpsList}><header><div><small>LIVE & ARCHIVE</small><h2>棋局列表</h2></div><b>{liveRooms.length} 实时 · {records.length} 归档</b></header>{liveRooms.map((item) => <button className={styles.liveMatchRow} key={item.roomId} onClick={() => void openMatch(item.roomId)} type="button"><span><Activity size={17} /></span><div><strong>{item.players.black} <i>vs</i> {item.players.white}</strong><small>{gameNames[item.game]} · {modeNames[item.mode]} · {item.roomId}</small></div><b>{item.status === "playing" ? "进行中" : "等待中"}</b><small>{item.spectatorCount ?? 0} 人观战</small></button>)}{records.map((item) => <button className={styles.matchArchiveRow} key={item.id} onClick={() => void openMatch(item.roomId, item.id)} type="button"><span>{item.winner === "black" ? "黑" : item.winner === "white" ? "白" : "和"}</span><div><strong>{item.players.black} <i>vs</i> {item.players.white}</strong><small>{gameNames[item.game]} · {modeNames[item.mode]} · {item.moveCount} 手</small></div><b>{item.rankStatus === "reversed" ? "已纠错" : item.winner === "draw" ? "和棋" : `${item.winner === "black" ? "黑方" : "白方"}胜`}</b><time>{formatTime(item.endedAt)}</time></button>)}{!liveRooms.length && !records.length && <div className={styles.gameOpsEmpty}><Gamepad2 size={25} /><strong>没有找到棋局</strong><p>调整筛选条件后再试。</p></div>}</section>
-      <section className={styles.matchInspector}>{detail ? <><header><div><small>{detail.kind === "live" ? "LIVE INSPECTION" : "ARCHIVED REPLAY"}</small><h2>{detail.match.players.black} vs {detail.match.players.white}</h2></div><b>{detail.match.roomId}</b></header><div className={styles.matchInspectorMeta}><span>{gameNames[detail.match.game]}</span><span>{modeNames[detail.match.mode]}</span><span>{detail.match.boardSize} 路</span><span>{detail.kind === "live" ? `${detail.match.spectatorCount ?? 0} 人观战` : `${detail.match.moveCount} 手`}</span></div><ReplayBoard state={shownFrame} /><div className={styles.replayControl}><button disabled={frameIndex <= 0} onClick={() => setFrameIndex((value) => Math.max(0, value - 1))} type="button"><ArrowLeft size={16} /></button><input aria-label="复盘进度" max={Math.max(0, frames.length - 1)} min={0} onChange={(event) => setFrameIndex(Number(event.target.value))} type="range" value={Math.min(frameIndex, Math.max(0, frames.length - 1))} /><b>{Math.min(frameIndex, Math.max(0, frames.length - 1))} / {Math.max(0, frames.length - 1)}</b><button disabled={frameIndex >= frames.length - 1} onClick={() => setFrameIndex((value) => Math.min(frames.length - 1, value + 1))} type="button"><ArrowRight size={16} /></button></div><div className={styles.matchTimeline}><h3>事件时间线</h3>{detail.events.map((event, index) => <div key={`${event.requestId}-${index}`}><span /><time>{formatTime(event.createdAt)}</time><strong>{event.type}</strong><small>{event.actorPlayerId ?? "系统"} · v{event.roomVersion ?? "-"}</small></div>)}{!detail.events.length && <p>这盘棋没有额外事件记录。</p>}</div></> : <div className={styles.inspectorEmpty}><Eye size={28} /><strong>选择一盘棋</strong><p>这里会展示棋盘复盘和完整事件时间线。</p></div>}</section>
+      <section className={styles.matchInspector}>{detail ? <><header><div><small>{detail.kind === "live" ? "LIVE INSPECTION" : "ARCHIVED REPLAY"}</small><h2>{detail.match.players.black} vs {detail.match.players.white}</h2></div><b>{detail.match.roomId}</b></header><div className={styles.matchInspectorMeta}><span>{gameNames[detail.match.game]}</span><span>{modeNames[detail.match.mode]}</span><span>{detail.match.boardSize} 路</span><span>{detail.kind === "live" ? `${detail.match.spectatorCount ?? 0} 人观战` : `${detail.match.moveCount} 手`}</span>{detail.kind === "live" && <button className={followLive ? styles.liveFollowActive : ""} onClick={() => { setFollowLive((value) => !value); setFrameIndex(Number.MAX_SAFE_INTEGER); }} type="button"><Activity size={13} />{followLive ? "实时跟随" : "继续跟随"}</button>}</div><ReplayBoard state={shownFrame} /><div className={styles.replayControl}><button disabled={frameIndex <= 0} onClick={() => { setFollowLive(false); setFrameIndex((value) => Math.max(0, Math.min(value, frames.length - 1) - 1)); }} type="button"><ArrowLeft size={16} /></button><input aria-label="复盘进度" max={Math.max(0, frames.length - 1)} min={0} onChange={(event) => { const next = Number(event.target.value); setFrameIndex(next); setFollowLive(detail.kind === "live" && next === frames.length - 1); }} type="range" value={Math.min(frameIndex, Math.max(0, frames.length - 1))} /><b>{Math.min(frameIndex, Math.max(0, frames.length - 1))} / {Math.max(0, frames.length - 1)}</b><button disabled={frameIndex >= frames.length - 1} onClick={() => { const next = Math.min(frames.length - 1, frameIndex + 1); setFrameIndex(next); setFollowLive(detail.kind === "live" && next === frames.length - 1); }} type="button"><ArrowRight size={16} /></button></div><div className={styles.matchTimeline}><h3>事件时间线</h3>{detail.events.map((event, index) => <div key={`${event.requestId}-${index}`}><span /><time>{formatTime(event.createdAt)}</time><strong>{event.type}</strong><small>{event.actorPlayerId ?? "系统"} · v{event.roomVersion ?? "-"}</small></div>)}{!detail.events.length && <p>这盘棋没有额外事件记录。</p>}</div></> : <div className={styles.inspectorEmpty}><Eye size={28} /><strong>选择一盘棋</strong><p>这里会展示棋盘复盘和完整事件时间线。</p></div>}</section>
     </div> : <><AdminRankSeasons canManage={canManageSeasons} onError={onError} onNotice={onNotice} revision={revision} /><div className={styles.rankOpsColumns}>
       <section className={styles.rankProfiles}><header><div><small>RATING TABLE</small><h2>{rankGame === "go" ? "围棋" : "五子棋"}棋手</h2></div><b>{profiles.length} 人</b></header>{profiles.map((profile) => <article key={profile.userId}><span>{profile.position}</span><div><strong>{profile.displayName}</strong><small>{profile.publicId} · {profile.label}</small></div><b>{profile.rating}</b><small>{profile.wins}胜 {profile.losses}负 · {profile.matches}局</small></article>)}{!profiles.length && <div className={styles.gameOpsEmpty}><Users size={24} /><strong>暂无排位棋手</strong></div>}</section>
       <section className={styles.rankSettlements}><header><div><small>SETTLEMENTS</small><h2>最近结算</h2></div><b>只允许整局撤销</b></header>{rankMatches.map((match) => <article key={match.roomId}><div><strong>{match.players.black} <i>vs</i> {match.players.white}</strong><small>{match.roomId} · {formatTime(match.settledAt ?? match.createdAt)}</small></div><span>黑 {match.ratings.blackDelta === null ? "-" : `${match.ratings.blackDelta >= 0 ? "+" : ""}${match.ratings.blackDelta}`} · 白 {match.ratings.whiteDelta === null ? "-" : `${match.ratings.whiteDelta >= 0 ? "+" : ""}${match.ratings.whiteDelta}`}</span><b className={match.status === "reversed" ? styles.rankReversed : styles.rankSettled}>{match.status === "reversed" ? "已撤销" : match.status === "settled" ? "已结算" : "处理中"}</b>{canWriteRank && match.status === "settled" && <button onClick={() => { setReversing(match); setReason(""); }} type="button"><RotateCcw size={15} />纠错</button>}</article>)}{!rankMatches.length && <div className={styles.gameOpsEmpty}><Trophy size={24} /><strong>暂无排位结算</strong></div>}<div className={styles.correctionLog}><h3>纠错记录</h3>{corrections.map((item) => <div key={item.id}><ShieldCheck size={15} /><p><strong>{item.roomId}</strong><small>{item.reason}</small></p><span>{item.adminName}<br />{formatTime(item.createdAt)}</span></div>)}{!corrections.length && <p>尚未发生排位纠错。</p>}</div></section>
@@ -135,5 +156,5 @@ export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, o
 function ReplayBoard({ state }: { state?: MatchState }) {
   if (!state?.board?.length) return <div className={styles.replayBoardEmpty}>棋盘数据不可用</div>;
   const size = state.board.length;
-  return <div className={`${styles.adminReplayBoard} ${state.game === "reversi" ? styles.reversiReplay : ""}`} style={{ gridTemplateColumns: `repeat(${size},1fr)` }}>{state.board.flatMap((row, rowIndex) => row.map((stone, colIndex) => <span className={stone ? styles[`stone_${stone}`] : ""} key={`${rowIndex}-${colIndex}`}>{stone && <i />}</span>))}</div>;
+  return <div className={`${styles.adminReplayBoard} ${state.game === "reversi" ? styles.reversiReplay : ""}`} style={{ gridTemplateColumns: `repeat(${size},1fr)`, gridTemplateRows: `repeat(${size},1fr)` }}>{state.board.flatMap((row, rowIndex) => row.map((stone, colIndex) => <span className={stone ? styles[`stone_${stone}`] : ""} key={`${rowIndex}-${colIndex}`}>{stone && <i />}</span>))}</div>;
 }

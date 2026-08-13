@@ -79,6 +79,25 @@ test("offers mobile fullscreen and installable home-screen support", async () =>
   assert.match(styles, /\.mobile-install-guide/);
 });
 
+test("keeps the current workspace and provides realtime match chat controls", async () => {
+  const [page, chatRoute, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/chat/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /micosm-main-view/);
+  assert.match(page, /savedView === "community" \|\| savedView === "ranked" \|\| savedView === "history"/);
+  assert.match(page, /MatchChatVisibility = "hidden" \| "opponent" \| "all"/);
+  assert.match(page, /不接收/);
+  assert.match(page, /仅对手/);
+  assert.match(page, /对局聊天/);
+  assert.match(chatRoute, /channel === "match"/);
+  assert.match(chatRoute, /game_room_spectators/);
+  assert.match(chatRoute, /chat_updated/);
+  assert.match(styles, /\.match-chat-panel/);
+});
+
 test("keeps security, moderation, realtime, and operations hardening wired", async () => {
   const [migration, rateLimit, moderationRoute, worker, platformHub, health, operations] = await Promise.all([
     readFile(new URL("../lib/database-migrations.ts", import.meta.url), "utf8"),

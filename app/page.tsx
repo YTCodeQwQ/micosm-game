@@ -155,6 +155,7 @@ type FriendsData = {
 type FriendTab = "friends" | "requests" | "blocked";
 type FriendConfirm = { type: "removeFriend" | "blockUser"; person: FriendPerson } | null;
 type ChatChannel = "world" | "direct";
+type MatchChatVisibility = "hidden" | "opponent" | "all";
 type LobbyHall = "main" | GameId;
 type ChatMessage = {
   id: string;
@@ -165,6 +166,10 @@ type ChatMessage = {
   isMine: boolean;
   sender: { id: string; displayName: string; signature: string; avatarUrl: string | null };
   room: { id: string; game: string; open: boolean } | null;
+};
+type MatchChatMessage = Omit<ChatMessage, "channel"> & {
+  channel: "match";
+  matchRole: Player | null;
 };
 type LobbyRoom = {
   id: string;
@@ -626,6 +631,12 @@ export default function HomePage() {
   const [chatText, setChatText] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [chatOverview, setChatOverview] = useState<ChatOverview>({ worldUnread: 0, directUnreads: {} });
+  const [matchChatOpen, setMatchChatOpen] = useState(false);
+  const [matchChatMessages, setMatchChatMessages] = useState<MatchChatMessage[]>([]);
+  const [matchChatText, setMatchChatText] = useState("");
+  const [matchChatBusy, setMatchChatBusy] = useState(false);
+  const [matchChatVisibility, setMatchChatVisibility] = useState<MatchChatVisibility>("opponent");
+  const [matchChatRevision, setMatchChatRevision] = useState(0);
   const [lobbyHall, setLobbyHall] = useState<LobbyHall>("main");
   const [lobbyRooms, setLobbyRooms] = useState<LobbyRoom[]>([]);
   const [lobbyCounts, setLobbyCounts] = useState<LobbyCounts>({ main: 0, go: 0, gomoku: 0, reversi: 0 });
@@ -692,6 +703,7 @@ export default function HomePage() {
   const seenGameInvites = useRef(new Set<string>());
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const mobileChatEndRef = useRef<HTMLDivElement | null>(null);
+  const matchChatEndRef = useRef<HTMLDivElement | null>(null);
   const [favorites, setFavorites] = useState<GameId[]>(["go", "gomoku"]);
   const [completed, setCompleted] = useState(0);
   const [ready, setReady] = useState(false);
@@ -738,6 +750,10 @@ export default function HomePage() {
           });
           if (typeof settings.boardScale === "number") setBoardScale(Math.min(130, Math.max(70, settings.boardScale)));
         }
+        const savedView = window.sessionStorage.getItem("micosm-main-view");
+        if (savedView === "community" || savedView === "ranked" || savedView === "history") setMainView(savedView);
+        const savedMatchChatVisibility = window.localStorage.getItem("micosm-match-chat-visibility");
+        if (["hidden", "opponent", "all"].includes(savedMatchChatVisibility ?? "")) setMatchChatVisibility(savedMatchChatVisibility as MatchChatVisibility);
       } catch {
         // Local progress is optional.
       }
@@ -838,7 +854,7 @@ export default function HomePage() {
   }, [authUser, notificationRevision]);
 
   useEffect(() => {
-    if (!authUser || mainView !== "ranked") return;
+    if (!authUser || (mainView !== "games" && mainView !== "ranked")) return;
     let disposed = false;
     const loadRank = async () => {
       try {
@@ -953,6 +969,33 @@ export default function HomePage() {
   }, [chatMessages]);
 
   useEffect(() => {
+    matchChatEndRef.current?.scrollIntoView({ block: "end" });
+  }, [matchChatMessages, matchChatOpen, matchChatVisibility]);
+
+  useEffect(() => {
+    if (ready) window.localStorage.setItem("micosm-match-chat-visibility", matchChatVisibility);
+  }, [matchChatVisibility, ready]);
+
+  useEffect(() => {
+    if (!matchChatOpen || !room?.id || !authUser) return;
+    let disposed = false;
+    const roomId = room.id;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/api/chat?channel=match&roomId=${encodeURIComponent(roomId)}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json() as { messages: MatchChatMessage[] };
+        if (!disposed) setMatchChatMessages(data.messages);
+      } catch {
+        // The room socket and recovery poll will retry.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 10_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [authUser, matchChatOpen, matchChatRevision, room?.id]);
+
+  useEffect(() => {
     if (ready) window.localStorage.setItem("micosm-progress", JSON.stringify({ favorites, completed }));
   }, [completed, favorites, ready]);
 
@@ -964,6 +1007,11 @@ export default function HomePage() {
   useEffect(() => {
     if (ready) window.localStorage.setItem("micosm-settings", JSON.stringify({ ...preferences, boardScale }));
   }, [boardScale, preferences, ready]);
+
+  useEffect(() => {
+    if (!ready || room) return;
+    window.sessionStorage.setItem("micosm-main-view", mainView === "story" ? "games" : mainView);
+  }, [mainView, ready, room]);
 
   useEffect(() => {
     let disposed = false;
@@ -981,6 +1029,7 @@ export default function HomePage() {
               if (!data.room.role && !data.room.rolePending && !session.spectating) throw new Error("玩家身份已失效");
               if (disposed) return;
               setRoom(data.room);
+              setMainView("games");
               setPlayerId(session.playerId ?? "");
               if (data.room.role && data.room.players[data.room.role]) setDisplayName(data.room.players[data.room.role] as string);
               setActiveGame(data.room.game);
@@ -1059,6 +1108,7 @@ export default function HomePage() {
         try {
           const message = JSON.parse(String(event.data)) as { type?: string };
           if (["room_updated", "room_closed", "connected"].includes(message.type ?? "")) void refreshRoom();
+          if (message.type === "chat_updated") setMatchChatRevision((value) => value + 1);
         } catch {
           // Ignore non-protocol messages and keep the recovery fetch active.
         }
@@ -1269,7 +1319,7 @@ export default function HomePage() {
   }, [room]);
 
   const activeMeta = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
-  const boardStyle = { "--board-max": `${Math.round(680 * boardScale / 100)}px` } as CSSProperties;
+  const boardStyle = { "--board-max": `${Math.round(720 * boardScale / 100)}px` } as CSSProperties;
   const remoteState = room?.game === activeGame ? room.state : null;
   const reviewFrame = review?.frames[review.index] ?? null;
   const visibleGoBoard = reviewFrame && activeGame === "go" ? reviewFrame.board : remoteState?.game === "go" ? remoteState.board : goBoard;
@@ -1371,7 +1421,7 @@ export default function HomePage() {
     }
   }
 
-  async function startRanked() {
+  async function startRanked(game: RankGame = rankedGame) {
     if (!authUser) return showToast("请先登录");
     if (room) return showToast("请先退出当前房间");
     if (rankBusy) return;
@@ -1380,7 +1430,7 @@ export default function HomePage() {
       const response = await fetch("/api/match", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "rankmake", game: rankedGame }),
+        body: JSON.stringify({ type: "rankmake", game }),
       });
       const data = await response.json() as { room?: RoomView; playerId?: string; error?: { message?: string } };
       if (!response.ok || !data.room || !data.playerId) throw new Error(data.error?.message ?? "开始排位失败");
@@ -1398,6 +1448,10 @@ export default function HomePage() {
     if (room) return showToast("请先退出当前房间再进入排位");
     setCommunityLiveOpen(false);
     setMainView("ranked");
+    setChatOpen(false);
+    setFriendPanelOpen(false);
+    setNotificationOpen(false);
+    setAccountOpen(false);
     setLibraryMenuOpen(false);
   }
 
@@ -1725,6 +1779,47 @@ export default function HomePage() {
     setHistoryReview(null);
     setHistoryTab("recent");
     setMainView("history");
+  }
+
+  async function refreshMatchChat() {
+    if (!room?.id) return;
+    const response = await fetch(`/api/chat?channel=match&roomId=${encodeURIComponent(room.id)}`, { cache: "no-store" });
+    const data = await response.json() as { messages?: MatchChatMessage[]; error?: { message?: string } };
+    if (!response.ok || !data.messages) throw new Error(data.error?.message ?? "无法读取对局聊天");
+    setMatchChatMessages(data.messages);
+  }
+
+  async function sendMatchChatMessage() {
+    const body = matchChatText.trim();
+    if (!room?.id || !body || matchChatBusy) return;
+    setMatchChatBusy(true);
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "send", channel: "match", roomId: room.id, body }),
+      });
+      const data = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(data.error?.message ?? "消息发送失败");
+      setMatchChatText("");
+      await refreshMatchChat();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "消息发送失败", "warning");
+    } finally {
+      setMatchChatBusy(false);
+    }
+  }
+
+  async function matchChatMessageAction(type: "delete" | "report", messageId: string) {
+    try {
+      const response = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type, messageId }) });
+      const data = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(data.error?.message ?? "操作失败");
+      showToast(type === "delete" ? "消息已删除" : "已提交举报", "success");
+      await refreshMatchChat();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "操作失败", "warning");
+    }
   }
 
   function closeHistoryReview() {
@@ -2207,6 +2302,9 @@ export default function HomePage() {
     setRoom(null);
     setPendingMove(null);
     setMobileMatchMenuOpen(false);
+    setMatchChatOpen(false);
+    setMatchChatMessages([]);
+    setMatchChatText("");
     setPlayerId("");
     setAiThinking(false);
     setAiError("");
@@ -2269,6 +2367,7 @@ export default function HomePage() {
     if (room && room.game !== game) return showToast("请先退出当前房间再切换游戏");
     setPendingMove(null);
     setActiveGame(game);
+    if (game === "go" || game === "gomoku") setRankedGame(game);
   }
 
   async function copyInviteCode() {
@@ -2440,6 +2539,11 @@ export default function HomePage() {
   const roomRole = room?.rolePending ? `${displayName.trim() || "你"} · 随机待定` : room?.role ? `${myDisplayName || "你"} · ${playerName(room.role)}` : "观战";
   const blackLabel = room?.players.black ? `${room.players.black} · 黑方` : "黑方";
   const whiteLabel = room?.players.white ? `${room.players.white} · 白方` : "白方";
+  const visibleMatchChatMessages = matchChatVisibility === "hidden"
+    ? []
+    : matchChatVisibility === "all"
+      ? matchChatMessages
+      : matchChatMessages.filter((message) => message.isMine || (opponentRole ? message.matchRole === opponentRole : message.matchRole !== null));
   const goCapturesVisible = remoteState?.game === "go" ? remoteState.captures ?? { black: 0, white: 0 } : { black: 0, white: 0 };
   const goScoreVisible = remoteState?.game === "go"
     ? remoteState.finalScore
@@ -2508,8 +2612,8 @@ export default function HomePage() {
         </div>
         <nav className="main-nav" aria-label="主导航">
           <button className={mainView === "games" ? "active" : ""} onClick={() => { setCommunityLiveOpen(false); setMainView("games"); }} type="button"><Play size={17} fill={mainView === "games" ? "currentColor" : "none"} />游戏</button>
+          <button className={`rank-nav-button ${mainView === "ranked" ? "active" : ""}`} onClick={openRankedLobby} type="button"><Trophy size={17} />排位</button>
           <button className={mainView === "community" ? "active" : ""} onClick={() => openCommunity("discussion")} type="button"><MessageCircle size={17} />社区</button>
-          <button className={mainView === "ranked" ? "active" : ""} onClick={openRankedLobby} type="button"><Trophy size={17} />排位</button>
           {STORY_MODE_ENABLED && <button className={mainView === "story" ? "active" : ""} onClick={openStoryMode} type="button"><BookOpen size={17} />剧情</button>}
         </nav>
         <div className="header-actions">
@@ -2533,6 +2637,7 @@ export default function HomePage() {
 
       <nav className={`mobile-primary-nav ${mainView === "history" ? "history-hidden" : ""}`} aria-label="手机主导航">
         <button className={mainView === "games" && !chatOpen && !friendPanelOpen && !accountOpen ? "active" : ""} onClick={() => { setCommunityLiveOpen(false); setMainView("games"); setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(false); }} type="button"><Play size={20} fill="currentColor" /><span>游戏</span></button>
+        <button className={`mobile-rank-nav ${mainView === "ranked" ? "active" : ""}`} onClick={openRankedLobby} type="button"><Trophy size={20} /><span>排位</span></button>
         <button className={mainView === "community" || (chatOpen && chatChannel === "world") ? "active" : ""} onClick={() => openCommunity("discussion")} type="button"><Globe2 size={20} /><span>大厅</span>{chatOverview.worldUnread > 0 && <b>{Math.min(chatOverview.worldUnread, 9)}</b>}</button>
         <button className={friendPanelOpen || (chatOpen && chatChannel === "direct") ? "active" : ""} onClick={() => { setChatOpen(false); setAccountOpen(false); setFriendPanelOpen(true); }} type="button"><Users size={20} /><span>好友</span>{friendBadge > 0 && <b>{Math.min(friendBadge, 9)}</b>}</button>
         <button className={accountOpen ? "active" : ""} onClick={() => { setChatOpen(false); setFriendPanelOpen(false); setAccountOpen(true); }} type="button"><UserRound size={20} /><span>我的</span></button>
@@ -2685,7 +2790,7 @@ export default function HomePage() {
                   ) : (
                     <span className="room-chip-label">{room.mode === "ranked" ? <Trophy size={14} /> : room.mode === "ai" ? <Bot size={14} /> : <Search size={14} />}{room.mode === "ranked" ? "排位对局" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.name ?? "电脑"}` : "匹配对局"}<i>{room.rolePending ? "?" : room.role === "black" ? "黑" : room.role === "white" ? "白" : "观"}</i></span>
                   )}
-                  <button aria-label={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} onClick={() => { if (room.mode !== "private" && !room.opponentReady) void cancelMatchmaking(); else setConfirmIntent("leave"); }} title={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} type="button"><X size={15} /></button>
+                  <button aria-label={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} className="room-leave-button" onClick={() => { if (room.mode !== "private" && !room.opponentReady) void cancelMatchmaking(); else setConfirmIntent("leave"); }} title={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} type="button"><X size={15} /><b>{room.mode !== "private" && !room.opponentReady ? "取消" : "退出"}</b></button>
                 </div>
               )}
               <label className="zoom-control">
@@ -2876,6 +2981,7 @@ export default function HomePage() {
               <div className="mobile-actions-head"><span><small>MATCH ACTIONS</small><strong>对局操作</strong></span><button aria-label="关闭对局操作" onClick={() => setMobileMatchMenuOpen(false)} type="button"><X size={18} /></button></div>
               {review ? <button className="secondary-action" onClick={closeReview} type="button"><X size={16} />结束复盘</button> : room && !room.role ? <button className="secondary-action" onClick={clearRoom} type="button"><ChevronLeft size={16} />退出观战</button> : <>
               {room && <span className={`connection-state ${connectionState}`}>{connectionState === "reconnecting" ? <WifiOff size={14} /> : <Wifi size={14} />}{connectionState === "reconnecting" ? "重连中" : "已连接"}</span>}
+              {room && room.mode !== "ai" && <button className="secondary-action match-chat-action" onClick={() => { setMobileMatchMenuOpen(false); setMatchChatOpen(true); }} type="button"><MessageCircle size={16} />对局聊天{matchChatMessages.length > 0 && <b>{Math.min(matchChatMessages.length, 99)}</b>}</button>}
               {room?.mode === "matchmaking" && room.role && <button className={`secondary-action spectator-consent-action ${room.spectatorPolicy === "public" ? "is-open" : ""}`} disabled={actionBusy} onClick={() => { setMobileMatchMenuOpen(false); void toggleMatchmakingSpectators(); }} type="button"><Users size={16} />{room.spectatorPolicy === "public" ? "观战已开放" : (room.state.spectatorConsents ?? []).includes(room.role) ? "已同意观战" : "同意开放观战"}</button>}
               {room?.mode === "ai" && aiError && <button className="secondary-action ai-retry-action" disabled={aiThinking} onClick={() => setAiRetryNonce((value) => value + 1)} type="button"><RotateCcw size={16} />重新计算</button>}
               <button className="secondary-action" disabled={room?.mode === "ranked" || !canRequestUndo || actionBusy} onClick={() => { setMobileMatchMenuOpen(false); void submitMatchAction({ type: "requestUndo" }); }} title={room?.mode === "ranked" ? "排位对局不能悔棋" : canRequestUndo ? room?.mode === "ai" ? "撤销双方上一轮落子" : "申请撤销刚刚的一手" : room?.mode === "ai" ? "电脑落子后可以悔棋" : "只能撤销自己刚刚落下的一手"} type="button"><Undo2 size={16} />悔棋</button>
@@ -2913,6 +3019,12 @@ export default function HomePage() {
           <section className="rule-block">
             <span className="info-label">规则</span>
             <p>{activeGame === "go" && "中国数子法，黑贴 3 又 3/4 子（等效白加 7.5 点）；全局同形禁着，双停后双方标记死子并确认。"}{activeGame === "gomoku" && `黑方先行，率先连成五子获胜。${remoteState?.gomokuForbidden ? "本局启用三三、四四与长连禁手。" : "本局不启用禁手。"}`}{activeGame === "reversi" && "夹住对手棋子并翻转，终局棋子较多者获胜。"}</p>
+          </section>
+
+          <section className="match-move-list" aria-label="最近落子">
+            <header><span className="info-label">最近落子</span><small>{moveCount} 手</small></header>
+            <div>{(remoteState?.moves ?? []).filter((move) => move.type !== "resumeGo").slice(-6).reverse().map((move, index) => <span key={`${move.player}-${moveCount - index}`}><b>{moveCount - index}</b><i className={`mini-stone ${move.player}`} /><strong>{room?.players[move.player] ?? playerName(move.player)}</strong><small>{move.type === "play" ? reviewMoveCoordinate(remoteState?.game ?? activeGame, remoteState?.size ?? activeBoardSize, move.row, move.col) : "停一手"}</small></span>)}</div>
+            {moveCount === 0 && <p>第一手落下后，这里会记录最近的行棋。</p>}
           </section>
 
           <div className="focus-note"><Sparkles size={18} /><div><strong>{room ? room.mode === "ranked" ? "排位对局" : room.mode === "matchmaking" ? "服务器匹配" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.title ?? "标准"}` : `邀请码 ${room.id}` : "多人模式"}</strong><p>{room ? `${roomRole} · ${room.opponentReady ? opponentDisplayName ? `${room.mode === "ai" ? "电脑棋手" : "对手"} ${opponentDisplayName}` : "双方已连接" : "等待对手"}` : "可以随机匹配，也可以邀请好友。"}</p></div></div>
@@ -2958,7 +3070,9 @@ export default function HomePage() {
               onAnnouncement={() => openCommunity("announcements")}
               onMatch={() => void startMatchmaking()}
               onRanked={openRankedLobby}
+              onStartRanked={() => void startRanked(activeGame === "gomoku" ? "gomoku" : "go")}
               onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
+              rankData={rankData}
             />
           </div>
           <MobileGameHome
@@ -2997,8 +3111,10 @@ export default function HomePage() {
             onAnnouncement={() => openCommunity("announcements")}
             onMatch={() => void startMatchmaking()}
             onRanked={openRankedLobby}
+            onStartRanked={() => void startRanked(activeGame === "gomoku" ? "gomoku" : "go")}
             onStory={openStoryMode}
             onlineFriends={friendsData.friends.filter((friend) => friend.online).length}
+            rankData={rankData}
           />
         </>
       ) : mainView === "community" && authUser ? (
@@ -3085,12 +3201,26 @@ export default function HomePage() {
       )}
       </div>
 
-      {(!authReady || !authUser) && (
+      {room && room.mode !== "ai" && matchChatOpen && (
+        <MatchChatPanel
+          busy={matchChatBusy}
+          endRef={matchChatEndRef}
+          messages={visibleMatchChatMessages}
+          onClose={() => setMatchChatOpen(false)}
+          onDelete={(messageId) => void matchChatMessageAction("delete", messageId)}
+          onReport={(messageId) => void matchChatMessageAction("report", messageId)}
+          onSend={() => void sendMatchChatMessage()}
+          onTextChange={setMatchChatText}
+          onVisibilityChange={setMatchChatVisibility}
+          roomRole={room.role}
+          text={matchChatText}
+          visibility={matchChatVisibility}
+        />
+      )}
+
+      {authReady && !authUser && (
         <div className="auth-backdrop">
           <section aria-labelledby="auth-title" aria-modal="true" className="auth-dialog" role="dialog">
-            {!authReady ? (
-              <LoaderCircle aria-label="正在检查登录状态" className="spin" size={26} />
-            ) : (
               <>
                 <span className="auth-logo"><Image src="/micosm-logo.webp" alt="" height={44} width={44} unoptimized /></span>
                 <h2 id="auth-title">进入 Micosm Game</h2>
@@ -3113,8 +3243,8 @@ export default function HomePage() {
                   <button className="auth-submit" disabled={authBusy || !authPhone.trim() || authPassword.length < 8 || (authMode === "register" && (!displayName.trim() || !authInviteCode.trim() || authPassword !== authPasswordConfirm))} type="submit">{authBusy ? <LoaderCircle className="spin" size={17} /> : <LogIn size={17} />}{authMode === "signIn" ? "登录" : "注册并登录"}</button>
                 </form>
               </>
-            )}
           </section>
+
         </div>
       )}
 
@@ -3375,12 +3505,17 @@ type ClubLobbyProps = {
   onAnnouncement: () => void;
   onMatch: () => void;
   onRanked: () => void;
+  onStartRanked: () => void;
   onStory?: () => void;
   onlineFriends: number;
+  rankData: RankData | null;
 };
 
-function MobileGameHome({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onByoYomiPeriodsChange, onByoYomiSecondsChange, onClockEnabledChange, onClockModeChange, onTurnSecondsChange, onTotalMinutesChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onSpectatorPolicyChange, onStory, onlineFriends, privateByoYomiPeriods, privateByoYomiSeconds, privateClockEnabled, privateClockMode, privateTotalMinutes, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+function MobileGameHome({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onByoYomiPeriodsChange, onByoYomiSecondsChange, onClockEnabledChange, onClockModeChange, onTurnSecondsChange, onTotalMinutesChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onSpectatorPolicyChange, onStartRanked, onStory, onlineFriends, privateByoYomiPeriods, privateByoYomiSeconds, privateClockEnabled, privateClockMode, privateTotalMinutes, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy, rankData }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
+  const homeRankGame: RankGame = activeGame === "gomoku" ? "gomoku" : "go";
+  const homeRank = rankData?.profiles[homeRankGame];
+  const canStartHomeRank = activeGame !== "reversi" && Boolean(rankData?.seasonPlayable && homeRank);
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
     gomoku: "/micosm-gomoku-scene.webp",
@@ -3422,11 +3557,11 @@ function MobileGameHome({ activeGame, announcement, authUser, busy, colorPrefere
       </section>
 
       <section className="mobile-play-actions" aria-label="开始对局">
-        <button className="mobile-quick-match" disabled={busy || !authUser} onClick={onMatch} type="button"><span><Search size={22} /></span><div><strong>快速匹配</strong><small>{selected.title} · 随机执色</small></div><ChevronRight size={20} /></button>
-        <div>
-          <button disabled={busy || !authUser} onClick={onAI} type="button"><Bot size={19} /><span><strong>人机对战</strong><small>四档难度</small></span></button>
-          <button className="rank" disabled={busy || !authUser || activeGame === "reversi"} onClick={onRanked} type="button"><Trophy size={19} /><span><strong>星轨排位</strong><small>{activeGame === "reversi" ? "黑白棋不参与" : "冲击新段位"}</small></span></button>
+        <div className="mobile-core-actions">
+          <button className="mobile-ranked-entry" disabled={busy || !authUser} onClick={canStartHomeRank ? onStartRanked : onRanked} type="button"><span><Trophy size={22} /></span><div><small>RANKED</small><strong>{canStartHomeRank ? "开始排位" : "进入排位中心"}</strong><p>{activeGame === "reversi" ? "围棋与五子棋专属" : rankData && !rankData.seasonPlayable ? rankData.seasonReason : `${homeRank?.label ?? "尘星"} · ${rankData?.season?.name ?? "查看赛季与段位"}`}</p></div>{canStartHomeRank ? <Search size={20} /> : <ChevronRight size={20} />}</button>
+          <button className="mobile-quick-match" disabled={busy || !authUser} onClick={onMatch} type="button"><span><Search size={22} /></span><div><small>QUICK PLAY</small><strong>快速匹配</strong><p>{selected.title} · 随机执色</p></div><ChevronRight size={20} /></button>
         </div>
+        <button className="mobile-ai-entry" disabled={busy || !authUser} onClick={onAI} type="button"><Bot size={19} /><span><strong>人机对战</strong><small>四档难度 · 支持复盘</small></span><ChevronRight size={18} /></button>
       </section>
 
       {STORY_MODE_ENABLED && <button className="mobile-story-banner" onClick={onStory} type="button">
@@ -3467,8 +3602,11 @@ function MobileGameHome({ activeGame, announcement, authUser, busy, colorPrefere
   );
 }
 
-function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onByoYomiPeriodsChange, onByoYomiSecondsChange, onClockEnabledChange, onClockModeChange, onTurnSecondsChange, onTotalMinutesChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onSpectatorPolicyChange, onlineFriends, privateByoYomiPeriods, privateByoYomiSeconds, privateClockEnabled, privateClockMode, privateTotalMinutes, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy }: ClubLobbyProps) {
+function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, completed, favoriteCount, goSize, joinCode, onAI, onAnnouncement, onByoYomiPeriodsChange, onByoYomiSecondsChange, onClockEnabledChange, onClockModeChange, onTurnSecondsChange, onTotalMinutesChange, onColorChange, onCreate, onForbiddenEnabledChange, onGameChange, onGoSizeChange, onJoin, onJoinCodeChange, onMatch, onRanked, onSpectatorPolicyChange, onStartRanked, onlineFriends, privateByoYomiPeriods, privateByoYomiSeconds, privateClockEnabled, privateClockMode, privateTotalMinutes, privateTurnSeconds, privateForbiddenEnabled, privateSpectatorPolicy, rankData }: ClubLobbyProps) {
   const selected = gameCatalog.find((game) => game.id === activeGame) ?? gameCatalog[0];
+  const homeRankGame: RankGame = activeGame === "gomoku" ? "gomoku" : "go";
+  const homeRank = rankData?.profiles[homeRankGame];
+  const canStartHomeRank = activeGame !== "reversi" && Boolean(rankData?.seasonPlayable && homeRank);
   const gameArtwork: Record<GameId, string> = {
     go: "/micosm-go-scene.webp",
     gomoku: "/micosm-gomoku-scene.webp",
@@ -3511,11 +3649,18 @@ function ClubLobby({ activeGame, announcement, authUser, busy, colorPreference, 
 
         {activeGame === "go" && <div className="lobby-board-size"><span>棋盘规格</span><div>{[9, 13, 19].map((size) => <button className={goSize === size ? "active" : ""} key={size} onClick={() => onGoSizeChange(size)} type="button">{size} 路</button>)}</div></div>}
 
-        <button className="lobby-match-button" disabled={busy || !authUser} onClick={onMatch} type="button">
-          {busy ? <LoaderCircle className="spin" size={20} /> : <Play fill="currentColor" size={19} />}
-          <span><strong>快速匹配</strong><small>{selected.title} · 随机执色{activeGame === "gomoku" ? " · 标准禁手" : ""}</small></span>
-          <Search size={18} />
-        </button>
+        <div className="lobby-core-actions" aria-label="核心玩法">
+          <button className="lobby-ranked-button" disabled={busy || !authUser} onClick={canStartHomeRank ? onStartRanked : onRanked} type="button">
+            <Trophy size={20} />
+            <span><small>RANKED</small><strong>{canStartHomeRank ? "开始排位" : "进入排位中心"}</strong><p>{activeGame === "reversi" ? "围棋与五子棋专属" : rankData && !rankData.seasonPlayable ? rankData.seasonReason : `${homeRank?.label ?? "尘星"} · ${rankData?.season?.name ?? "查看赛季与段位"}`}</p></span>
+            {canStartHomeRank ? <Search size={18} /> : <ChevronRight size={18} />}
+          </button>
+          <button className="lobby-match-button" disabled={busy || !authUser} onClick={onMatch} type="button">
+            {busy ? <LoaderCircle className="spin" size={20} /> : <Play fill="currentColor" size={19} />}
+            <span><small>QUICK PLAY</small><strong>快速匹配</strong><p>{selected.title} · 随机执色{activeGame === "gomoku" ? " · 标准禁手" : ""}</p></span>
+            <Search size={18} />
+          </button>
+        </div>
         <button className="lobby-ai-button" disabled={busy || !authUser} onClick={onAI} type="button">
           <span className="lobby-ai-icon"><Bot size={20} /></span>
           <span><strong>人机对战</strong><small>四档难度 · 自选执色 · 支持复盘</small></span>
@@ -4271,6 +4416,56 @@ function MobileWorldChannel({ activeGame, busy, currentUserId, endRef, hall, lob
         <button aria-label="发送消息" className="send" disabled={busy || !text.trim()} type="submit">{busy ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}</button>
       </form>}
     </section>
+  );
+}
+
+function MatchChatPanel({ busy, endRef, messages, onClose, onDelete, onReport, onSend, onTextChange, onVisibilityChange, roomRole, text, visibility }: {
+  busy: boolean;
+  endRef: RefObject<HTMLDivElement | null>;
+  messages: MatchChatMessage[];
+  onClose: () => void;
+  onDelete: (messageId: string) => void;
+  onReport: (messageId: string) => void;
+  onSend: () => void;
+  onTextChange: (value: string) => void;
+  onVisibilityChange: (value: MatchChatVisibility) => void;
+  roomRole: Player | null;
+  text: string;
+  visibility: MatchChatVisibility;
+}) {
+  return (
+    <aside aria-label="对局聊天" className="match-chat-panel">
+      <header>
+        <div><small>MATCH CHAT</small><h2>对局聊天</h2></div>
+        <button aria-label="关闭对局聊天" onClick={onClose} type="button"><X size={18} /></button>
+      </header>
+      <nav aria-label="消息显示范围" className="match-chat-visibility">
+        <button className={visibility === "hidden" ? "active" : ""} onClick={() => onVisibilityChange("hidden")} type="button">不接收</button>
+        <button className={visibility === "opponent" ? "active" : ""} onClick={() => onVisibilityChange("opponent")} type="button">{roomRole ? "仅对手" : "仅棋手"}</button>
+        <button className={visibility === "all" ? "active" : ""} onClick={() => onVisibilityChange("all")} type="button">全部</button>
+      </nav>
+      <div aria-live="polite" className="match-chat-messages">
+        {visibility === "hidden" ? (
+          <div className="match-chat-empty"><MessageCircle size={24} /><strong>已隐藏对局消息</strong><p>需要时可切换到仅对手或全部。</p></div>
+        ) : messages.length === 0 ? (
+          <div className="match-chat-empty"><MessageCircle size={24} /><strong>还没有消息</strong><p>{roomRole ? "可以和对手打个招呼。" : "棋手和观战者都可以在这里交流。"}</p></div>
+        ) : messages.map((message) => (
+          <article className={`match-chat-message ${message.isMine ? "mine" : ""}`} key={message.id}>
+            {!message.isMine && <span><UserAvatar name={message.sender.displayName} src={message.sender.avatarUrl} /></span>}
+            <div>
+              <header><strong>{message.isMine ? "我" : message.sender.displayName}</strong><i>{message.matchRole ? playerName(message.matchRole) : "观战"}</i><time>{new Date(message.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></header>
+              <p>{message.body}</p>
+              <footer>{message.isMine ? <button aria-label="删除消息" onClick={() => onDelete(message.id)} title="删除消息" type="button"><Trash2 size={12} /></button> : <button aria-label="举报消息" onClick={() => onReport(message.id)} title="举报消息" type="button"><Flag size={12} /></button>}</footer>
+            </div>
+          </article>
+        ))}
+        <div ref={endRef} />
+      </div>
+      <form onSubmit={(event) => { event.preventDefault(); onSend(); }}>
+        <textarea aria-label="对局聊天消息" maxLength={200} onChange={(event) => onTextChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSend(); } }} placeholder="发送对局消息" rows={1} value={text} />
+        <button aria-label="发送消息" disabled={busy || !text.trim()} title="发送消息" type="submit">{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button>
+      </form>
+    </aside>
   );
 }
 

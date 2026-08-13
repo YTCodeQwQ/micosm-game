@@ -43,13 +43,24 @@ type Report = {
   id: string; messageId: string; message: string; createdAt: number; status: string; targetUserId: string | null;
   senderName: string; reporterName: string; deleted: boolean; source?: "chat" | "community"; targetType?: "message" | "post" | "comment";
 };
-type Sanction = { userId: string; publicId: string; displayName: string; mutedUntil: number | null; bannedUntil: number | null; reason: string };
+type Sanction = {
+  userId: string; publicId: string; displayName: string; mutedUntil: number | null; bannedUntil: number | null;
+  mutePermanent?: boolean; banPermanent?: boolean; reason: string;
+};
+type ModerationHistory = {
+  id: string; action: "mute" | "ban" | "unmute" | "unban"; reason: string; durationMs: number | null;
+  createdAt: number; targetUserId: string | null; targetName: string; targetPublicId: string; adminName: string;
+};
+type SanctionTarget = {
+  userId: string; displayName: string; publicId?: string; reportId?: string; defaultAction: "mute" | "ban";
+  mutedUntil?: number | null; bannedUntil?: number | null; reload: "users" | "moderation";
+};
 type EngineStatus = {
   engine: string; ready: boolean; reachable: boolean; responseMs: number; model?: string; version?: string; modelHash?: string;
   detail?: string; workers?: number; threadsPerWorker?: number; uptimeSeconds?: number;
   metrics?: { requests?: number; successes?: number; failures?: number; queued?: number; active?: number; latency?: { p50Ms?: number; p95Ms?: number } };
 };
-type ConfirmAction = { title: string; description: string; confirmLabel: string; danger?: boolean; run: (reason: string) => Promise<void> };
+type ConfirmAction = { title: string; description: string; confirmLabel: string; danger?: boolean; run: (reason: string) => Promise<unknown> };
 
 const ROLE_LABELS: Record<AdminRole | "player", string> = {
   super_admin: "超级管理员", admin: "管理员", moderator: "审核员", support: "客服", operator: "运维", player: "普通用户",
@@ -66,6 +77,20 @@ function formatTime(value: number | null | undefined) {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "无";
 }
 
+const PERMANENT_SANCTION_UNTIL = 253_402_300_799_000;
+
+function formatSanctionTime(value: number | null | undefined) {
+  return value === PERMANENT_SANCTION_UNTIL ? "永久" : formatTime(value);
+}
+
+function formatDuration(value: number | null, action: string) {
+  if (value === null) return action === "ban" ? "永久" : "立即生效";
+  const minutes = Math.round(value / 60_000);
+  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1_440) return `${Math.round(minutes / 60)} 小时`;
+  return `${Math.round(minutes / 1_440)} 天`;
+}
+
 function NavButton({ active, icon, label, badge, onClick }: { active: boolean; icon: ReactNode; label: string; badge?: number; onClick: () => void }) {
   return <button className={active ? styles.active : ""} onClick={onClick} type="button">{icon}<span>{label}</span>{badge ? <b>{badge}</b> : null}</button>;
 }
@@ -80,10 +105,12 @@ export default function AdminPage() {
   const [query, setQuery] = useState("");
   const [reports, setReports] = useState<Report[]>([]);
   const [sanctions, setSanctions] = useState<Sanction[]>([]);
+  const [moderationHistory, setModerationHistory] = useState<ModerationHistory[]>([]);
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [busy, setBusy] = useState("");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [sanctionTarget, setSanctionTarget] = useState<SanctionTarget | null>(null);
   const [reason, setReason] = useState("");
   const [announcementRevision, setAnnouncementRevision] = useState(0);
   const [communityRevision, setCommunityRevision] = useState(0);
@@ -112,9 +139,10 @@ export default function AdminPage() {
   }, [query]);
 
   const loadModeration = useCallback(async () => {
-    const result = await requestJson<{ reports: Report[]; sanctions: Sanction[] }>("/api/admin/moderation");
+    const result = await requestJson<{ reports: Report[]; sanctions: Sanction[]; history: ModerationHistory[] }>("/api/admin/moderation");
     setReports(result.reports);
     setSanctions(result.sanctions);
+    setModerationHistory(result.history);
   }, []);
 
   const loadAi = useCallback(async () => {
@@ -149,8 +177,10 @@ export default function AdminPage() {
       setNotice(success);
       window.setTimeout(() => setNotice(""), 2800);
       await Promise.all([reload(), loadOverview()]);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "管理操作失败");
+      return false;
     } finally {
       setBusy("");
     }
@@ -159,6 +189,12 @@ export default function AdminPage() {
   function ask(action: ConfirmAction) {
     setReason("");
     setConfirmAction(action);
+  }
+
+  function openSanction(target: SanctionTarget) {
+    const active = sanctions.find((item) => item.userId === target.userId);
+    setSanctionTarget({ ...target, mutedUntil: active?.mutedUntil ?? target.mutedUntil ?? null, bannedUntil: active?.bannedUntil ?? target.bannedUntil ?? null });
+    if (!moderationHistory.length) void loadModeration().catch((caught) => setError(caught instanceof Error ? caught.message : "处罚记录读取失败"));
   }
 
   async function submitConfirm(event: FormEvent) {
@@ -222,6 +258,7 @@ export default function AdminPage() {
               <div data-label="段位分"><strong>围 {user.ranks.go}</strong><small>五子棋 {user.ranks.gomoku}</small></div>
               <div data-label="状态"><b className={restricted ? styles.bad : styles.good}>{restricted ? "受限" : "正常"}</b><small>{user.sanction.reason || formatTime(user.updatedAt)}</small></div>
               <div className={styles.rowActions}>
+                {permissions.has("users.sanction") && <button className={restricted ? "" : styles.dangerButton} onClick={() => openSanction({ userId: user.id, displayName: user.displayName, publicId: user.publicId, defaultAction: "ban", mutedUntil: user.sanction.mutedUntil, bannedUntil: user.sanction.bannedUntil, reload: "users" })} type="button"><Ban size={16} />{restricted ? "处罚管理" : "处罚"}</button>}
                 {permissions.has("users.sessions") && <button disabled={Boolean(busy) || user.sessionCount === 0} onClick={() => ask({ title: "吊销全部会话", description: `让 ${user.displayName} 在所有设备上退出登录。`, confirmLabel: "确认吊销", danger: true, run: (why) => mutate("/api/admin/users", { action: "revoke_sessions", userId: user.id, reason: why }, "已吊销用户会话", () => loadUsers()) })} type="button"><LogOut size={16} />会话</button>}
                 {permissions.has("roles.write") && <select aria-label={`调整 ${user.displayName} 的角色`} disabled={Boolean(busy)} onChange={(event) => { const role = event.target.value; if (role === user.role) return; ask({ title: "调整管理角色", description: `将 ${user.displayName} 的角色由“${ROLE_LABELS[user.role]}”改为“${ROLE_LABELS[role as keyof typeof ROLE_LABELS]}”。`, confirmLabel: "确认调整", danger: role === "player", run: (why) => mutate("/api/admin/users", { action: "set_role", userId: user.id, role, reason: why }, "用户角色已更新", () => loadUsers()) }); }} value={user.role}><option value="player">普通用户</option><option value="support">客服</option><option value="moderator">审核员</option><option value="operator">运维</option><option value="admin">管理员</option><option value="super_admin">超级管理员</option></select>}
               </div>
@@ -234,11 +271,17 @@ export default function AdminPage() {
           <div className={styles.reportGrid}>{openReports.map((report) => <article className={styles.report} key={report.id}><header><div><strong>{report.senderName}</strong><small>{report.source === "community" ? report.targetType === "comment" ? "社区评论" : "社区帖子" : "频道消息"} · 由 {report.reporterName} 举报</small></div><time>{formatTime(report.createdAt)}</time></header><blockquote>{report.deleted ? "内容已删除" : report.message}</blockquote><footer>
             <button onClick={() => ask({ title: "忽略举报", description: "保留原消息并关闭这条举报。", confirmLabel: "确认忽略", run: (why) => mutate("/api/admin/moderation", { action: "dismiss", reportId: report.id, reason: why }, "举报已忽略", loadModeration) })} type="button"><Check size={15} />忽略</button>
             <button disabled={report.deleted} onClick={() => ask({ title: "删除违规内容", description: "内容会从频道或社区隐藏，相关举报自动结案。", confirmLabel: "删除内容", danger: true, run: (why) => mutate("/api/admin/moderation", { action: "delete_message", reportId: report.id, reason: why }, "违规内容已删除", loadModeration) })} type="button"><ShieldX size={15} />删除</button>
-            <button disabled={!report.targetUserId} onClick={() => ask({ title: "禁言 10 分钟", description: `暂时限制 ${report.senderName} 发送频道消息。`, confirmLabel: "确认禁言", run: (why) => mutate("/api/admin/moderation", { action: "mute", reportId: report.id, targetUserId: report.targetUserId, durationMinutes: 10, reason: why }, "用户已禁言", loadModeration) })} type="button"><VolumeX size={15} />禁言</button>
-            <button className={styles.dangerButton} disabled={!report.targetUserId} onClick={() => ask({ title: "封禁 24 小时", description: `封禁 ${report.senderName} 并吊销其全部登录会话。`, confirmLabel: "确认封禁", danger: true, run: (why) => mutate("/api/admin/moderation", { action: "ban", reportId: report.id, targetUserId: report.targetUserId, durationMinutes: 1440, reason: why }, "用户已封禁", loadModeration) })} type="button"><Ban size={15} />封禁</button>
+            <button disabled={!report.targetUserId} onClick={() => report.targetUserId && openSanction({ userId: report.targetUserId, displayName: report.senderName, reportId: report.id, defaultAction: "mute", reload: "moderation" })} type="button"><VolumeX size={15} />禁言</button>
+            <button className={styles.dangerButton} disabled={!report.targetUserId} onClick={() => report.targetUserId && openSanction({ userId: report.targetUserId, displayName: report.senderName, reportId: report.id, defaultAction: "ban", reload: "moderation" })} type="button"><Ban size={15} />封禁</button>
           </footer></article>)}{!openReports.length && <Empty icon={<ShieldCheck size={22} />} title="举报队列已清空" detail="当前没有等待处理的频道举报。" />}</div>
           <div className={styles.splitHeading}><div><strong>当前账号限制</strong><span>{sanctions.length}</span></div></div>
-          <div className={styles.sanctions}>{sanctions.map((sanction) => <article key={sanction.userId}><div><strong>{sanction.displayName}</strong><small>{sanction.publicId} · {sanction.reason || "未填写原因"}</small></div><span>{sanction.bannedUntil && sanction.bannedUntil > renderedAt ? `封禁至 ${formatTime(sanction.bannedUntil)}` : `禁言至 ${formatTime(sanction.mutedUntil)}`}</span><button onClick={() => ask({ title: "解除账号限制", description: `恢复 ${sanction.displayName} 的相关权限。`, confirmLabel: "确认解除", run: (why) => mutate("/api/admin/moderation", { action: sanction.bannedUntil && sanction.bannedUntil > renderedAt ? "unban" : "unmute", targetUserId: sanction.userId, reason: why }, "账号限制已解除", loadModeration) })} type="button">解除</button></article>)}</div>
+          <div className={styles.sanctions}>{sanctions.map((sanction) => {
+            const banned = Boolean(sanction.bannedUntil && sanction.bannedUntil > renderedAt);
+            const muted = Boolean(sanction.mutedUntil && sanction.mutedUntil > renderedAt);
+            return <article key={sanction.userId}><div><strong>{sanction.displayName}</strong><small>{sanction.publicId} · {sanction.reason || "未填写原因"}</small></div><div className={styles.sanctionStates}>{banned && <span><Ban size={13} />账号封禁：{formatSanctionTime(sanction.bannedUntil)}</span>}{muted && <span><VolumeX size={13} />聊天禁言：{formatSanctionTime(sanction.mutedUntil)}</span>}</div><div className={styles.sanctionActions}><button onClick={() => openSanction({ userId: sanction.userId, displayName: sanction.displayName, publicId: sanction.publicId, defaultAction: banned ? "ban" : "mute", mutedUntil: sanction.mutedUntil, bannedUntil: sanction.bannedUntil, reload: "moderation" })} type="button">调整</button>{banned && <button onClick={() => ask({ title: "提前解除账号封禁", description: `恢复 ${sanction.displayName} 的登录与平台使用权限，禁言状态不会同时解除。`, confirmLabel: "确认解封", run: (why) => mutate("/api/admin/moderation", { action: "unban", targetUserId: sanction.userId, reason: why }, "账号封禁已解除", loadModeration) })} type="button">解封</button>}{muted && <button onClick={() => ask({ title: "提前解除聊天禁言", description: `恢复 ${sanction.displayName} 的聊天权限，账号封禁状态不会同时解除。`, confirmLabel: "确认解除", run: (why) => mutate("/api/admin/moderation", { action: "unmute", targetUserId: sanction.userId, reason: why }, "聊天禁言已解除", loadModeration) })} type="button">解禁言</button>}</div></article>;
+          })}{!sanctions.length && <Empty icon={<ShieldCheck size={22} />} title="没有生效中的处罚" detail="当前所有账号均处于正常状态。" />}</div>
+          <div className={styles.splitHeading}><div><strong>最近处罚记录</strong><span>{moderationHistory.length}</span></div><small>保留执行人、对象、时长和内部备注</small></div>
+          <div className={styles.moderationHistory}>{moderationHistory.map((entry) => <article key={entry.id}><span className={entry.action === "ban" ? styles.historyBan : entry.action === "mute" ? styles.historyMute : styles.historyRelease}>{entry.action === "ban" ? <Ban size={16} /> : entry.action === "mute" ? <VolumeX size={16} /> : <Check size={16} />}</span><div><strong>{entry.targetName}<small>{entry.targetPublicId}</small></strong><p>{entry.reason || "未填写原因"}</p></div><aside><b>{entry.action === "ban" ? `封禁 ${formatDuration(entry.durationMs, entry.action)}` : entry.action === "mute" ? `禁言 ${formatDuration(entry.durationMs, entry.action)}` : entry.action === "unban" ? "解除封禁" : "解除禁言"}</b><small>{entry.adminName} · {formatTime(entry.createdAt)}</small></aside></article>)}</div>
         </section>}
 
         {view === "ai" && <section className={styles.pageSection}><div className={styles.engineGrid}>{engines.map((engine) => <article className={styles.engine} key={engine.engine}><header><span className={engine.ready ? styles.engineReady : styles.engineDown}><Bot size={22} /></span><div><strong>{engine.engine === "rapfi" ? "Rapfi 五子棋" : "KataGo 围棋"}</strong><small>{engine.model || "独立棋力服务"}</small></div><b className={engine.ready ? styles.good : styles.bad}>{engine.ready ? "运行中" : "不可用"}</b></header><dl><div><dt>响应</dt><dd>{engine.responseMs} ms</dd></div><div><dt>版本</dt><dd>{engine.version || "未上报"}</dd></div><div><dt>模型哈希</dt><dd>{engine.modelHash || "未上报"}</dd></div><div><dt>进程配置</dt><dd>{engine.workers ? `${engine.workers} 进程 × ${engine.threadsPerWorker} 线程` : "由部署环境管理"}</dd></div><div><dt>请求</dt><dd>{engine.metrics?.successes ?? 0} 成功 / {engine.metrics?.failures ?? 0} 失败</dd></div><div><dt>延迟</dt><dd>P50 {engine.metrics?.latency?.p50Ms ?? 0} ms · P95 {engine.metrics?.latency?.p95Ms ?? 0} ms</dd></div></dl><p>{engine.detail || "服务没有返回额外说明"}</p></article>)}</div><div className={styles.infoBand}><Activity size={19} /><div><strong>运行配置保持只读</strong><p>密钥、恢复数据库和重启宿主机不会放进网页后台；部署 Agent 仍负责这些高风险操作。</p></div></div></section>}
@@ -247,6 +290,7 @@ export default function AdminPage() {
       </section>
 
       {confirmAction && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setConfirmAction(null); }}><form aria-modal="true" className={styles.modal} onSubmit={submitConfirm} role="dialog"><header><div><small>ADMIN ACTION</small><h2>{confirmAction.title}</h2></div><button aria-label="关闭" onClick={() => setConfirmAction(null)} type="button"><X size={18} /></button></header><p>{confirmAction.description}</p><label>操作原因<textarea autoFocus maxLength={240} onChange={(event) => setReason(event.target.value)} placeholder="原因会永久写入审计记录" required rows={3} value={reason} /></label><footer><button onClick={() => setConfirmAction(null)} type="button">取消</button><button className={confirmAction.danger ? styles.confirmDanger : ""} disabled={!reason.trim()} type="submit">{confirmAction.confirmLabel}</button></footer></form></div>}
+      {sanctionTarget && <SanctionDialog busy={Boolean(busy)} history={moderationHistory.filter((entry) => entry.targetUserId === sanctionTarget.userId)} onClose={() => setSanctionTarget(null)} onRelease={(action) => { const target = sanctionTarget; const reloadTarget = target.reload === "users" ? () => Promise.all([loadUsers(), loadModeration()]).then(() => undefined) : loadModeration; setSanctionTarget(null); ask({ title: action === "unban" ? "提前解除账号封禁" : "提前解除聊天禁言", description: `恢复 ${target.displayName} 的相关权限，另一种处罚不会同时解除。`, confirmLabel: "确认解除", run: (why) => mutate("/api/admin/moderation", { action, targetUserId: target.userId, reason: why }, action === "unban" ? "账号封禁已解除" : "聊天禁言已解除", reloadTarget) }); }} onSubmit={async (payload) => { const reloadTarget = sanctionTarget.reload === "users" ? () => Promise.all([loadUsers(), loadModeration()]).then(() => undefined) : loadModeration; const ok = await mutate("/api/admin/moderation", { ...payload, reportId: sanctionTarget.reportId, targetUserId: sanctionTarget.userId }, payload.action === "ban" ? "账号封禁已生效" : "聊天禁言已生效", reloadTarget); if (ok) setSanctionTarget(null); }} renderedAt={renderedAt} target={sanctionTarget} />}
     </main>
   );
 }
@@ -263,4 +307,52 @@ function OverviewView({ data }: { data: Overview }) {
 
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
   return <div className={styles.empty}>{icon}<div><strong>{title}</strong><p>{detail}</p></div><ChevronRight size={17} /></div>;
+}
+
+function SanctionDialog({ busy, history, onClose, onRelease, onSubmit, renderedAt, target }: {
+  busy: boolean;
+  history: ModerationHistory[];
+  onClose: () => void;
+  onRelease: (action: "unmute" | "unban") => void;
+  onSubmit: (payload: Record<string, unknown>) => Promise<void>;
+  renderedAt: number;
+  target: SanctionTarget;
+}) {
+  const [action, setAction] = useState<"mute" | "ban">(target.defaultAction);
+  const [duration, setDuration] = useState(target.defaultAction === "mute" ? "10" : "1440");
+  const [customDuration, setCustomDuration] = useState("1");
+  const [customUnit, setCustomUnit] = useState<"minutes" | "hours" | "days">("days");
+  const [category, setCategory] = useState("abuse");
+  const [sanctionReason, setSanctionReason] = useState("");
+  const [internalNote, setInternalNote] = useState("");
+  const [permanentConfirmed, setPermanentConfirmed] = useState(false);
+  const banned = Boolean(target.bannedUntil && target.bannedUntil > renderedAt);
+  const muted = Boolean(target.mutedUntil && target.mutedUntil > renderedAt);
+  const permanent = action === "ban" && duration === "permanent";
+  const customMinutes = Math.round(Math.max(1, Number(customDuration) || 1) * (customUnit === "days" ? 1_440 : customUnit === "hours" ? 60 : 1));
+  const durationMinutes = duration === "custom" ? customMinutes : Math.max(1, Number(duration) || 1_440);
+  const maxMinutes = action === "mute" ? 43_200 : 525_600;
+  const validDuration = permanent || (durationMinutes >= 1 && durationMinutes <= maxMinutes);
+  const canSubmit = sanctionReason.trim().length >= 2 && validDuration && (!permanent || permanentConfirmed) && !busy;
+
+  function changeAction(next: "mute" | "ban") {
+    setAction(next);
+    setDuration(next === "mute" ? "10" : "1440");
+    setPermanentConfirmed(false);
+  }
+
+  return <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) onClose(); }}><form aria-modal="true" className={styles.sanctionDialog} onSubmit={(event) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    void onSubmit({ action, category, reason: sanctionReason.trim(), internalNote: internalNote.trim(), durationMinutes: Math.min(maxMinutes, durationMinutes), permanent });
+  }} role="dialog">
+    <header><div><small>SANCTION CONTROL</small><h2>处罚管理</h2><p>{target.displayName}<span>{target.publicId || "当前举报对象"}</span></p></div><button aria-label="关闭" disabled={busy} onClick={onClose} type="button"><X size={18} /></button></header>
+    {(banned || muted) && <section className={styles.currentRestrictions}><strong>当前生效</strong><div>{banned && <span><Ban size={14} />账号封禁至 {formatSanctionTime(target.bannedUntil)}<button onClick={() => onRelease("unban")} type="button">提前解封</button></span>}{muted && <span><VolumeX size={14} />聊天禁言至 {formatSanctionTime(target.mutedUntil)}<button onClick={() => onRelease("unmute")} type="button">解除禁言</button></span>}</div></section>}
+    <div className={styles.sanctionType}><button className={action === "ban" ? styles.active : ""} onClick={() => changeAction("ban")} type="button"><Ban size={18} /><span><strong>账号封禁</strong><small>退出全部设备，禁止登录和平台使用</small></span></button><button className={action === "mute" ? styles.active : ""} onClick={() => changeAction("mute")} type="button"><VolumeX size={18} /><span><strong>聊天禁言</strong><small>仅禁止世界频道、私聊及社区发言</small></span></button></div>
+    <fieldset className={styles.durationField}><legend>处罚时长</legend><div className={styles.durationPresets}>{(action === "mute" ? [["10", "10 分钟"], ["60", "1 小时"], ["1440", "1 天"], ["10080", "7 天"], ["43200", "30 天"]] : [["60", "1 小时"], ["1440", "1 天"], ["4320", "3 天"], ["10080", "7 天"], ["43200", "30 天"], ["permanent", "永久"]]).map(([value, label]) => <button className={duration === value ? styles.active : ""} key={value} onClick={() => { setDuration(value); setPermanentConfirmed(false); }} type="button">{label}</button>)}<button className={duration === "custom" ? styles.active : ""} onClick={() => setDuration("custom")} type="button">自定义</button></div>{duration === "custom" && <div className={styles.customDuration}><input aria-label="自定义处罚时长" min="1" onChange={(event) => setCustomDuration(event.target.value)} type="number" value={customDuration} /><select aria-label="时长单位" onChange={(event) => setCustomUnit(event.target.value as "minutes" | "hours" | "days")} value={customUnit}><option value="minutes">分钟</option><option value="hours">小时</option><option value="days">天</option></select><small>{action === "mute" ? "禁言最长 30 天" : "临时封禁最长 365 天"}</small></div>}</fieldset>
+    <div className={styles.sanctionFields}><label>违规类型<select onChange={(event) => setCategory(event.target.value)} value={category}><option value="abuse">违规内容</option><option value="harassment">骚扰攻击</option><option value="spam">垃圾信息</option><option value="cheating">作弊破坏</option><option value="account">账号风险</option><option value="other">其他原因</option></select></label><label>对用户展示的原因<textarea autoFocus maxLength={160} onChange={(event) => setSanctionReason(event.target.value)} placeholder="至少填写 2 个字，用户申诉时可见" required rows={3} value={sanctionReason} /></label><label>内部备注 <small>仅管理员可见</small><textarea maxLength={240} onChange={(event) => setInternalNote(event.target.value)} placeholder="证据、上下文或后续复核说明，可选" rows={2} value={internalNote} /></label></div>
+    {permanent && <label className={styles.permanentConfirm}><input checked={permanentConfirmed} onChange={(event) => setPermanentConfirmed(event.target.checked)} type="checkbox" /><span><strong>确认执行永久封禁</strong><small>该账号不会自动解封，且所有登录会话会立即失效。</small></span></label>}
+    {history.length > 0 && <details className={styles.targetHistory}><summary>查看该用户最近处罚记录（{history.length}）</summary>{history.slice(0, 5).map((entry) => <div key={entry.id}><span>{entry.action === "ban" ? "封禁" : entry.action === "mute" ? "禁言" : entry.action === "unban" ? "解封" : "解禁言"}</span><p>{entry.reason}</p><time>{formatTime(entry.createdAt)}</time></div>)}</details>}
+    <footer><p><ShieldCheck size={15} />本次操作将写入不可省略的管理审计记录</p><button disabled={busy} onClick={onClose} type="button">取消</button><button className={action === "ban" ? styles.confirmDanger : ""} disabled={!canSubmit} type="submit">{busy ? "正在执行…" : action === "ban" ? permanent ? "永久封禁" : "确认封禁" : "确认禁言"}</button></footer>
+  </form></div>;
 }

@@ -75,15 +75,16 @@ function kataGoVisits() {
 
 function kataGoSeconds() {
   const configured = Number((env as unknown as { AI_KATAGO_SECONDS?: string }).AI_KATAGO_SECONDS);
-  return Number.isFinite(configured) ? Math.max(2, Math.min(60, configured)) : 12;
+  return Number.isFinite(configured) ? Math.max(2, Math.min(30, configured)) : 5;
 }
 
 async function kataGoAction(state: MatchState): Promise<MatchAction> {
+  const maxSeconds = kataGoSeconds();
   const response = await fetch(`${aiServiceOrigin()}/move`, {
     method: "POST",
     headers: aiServiceHeaders(),
-    body: JSON.stringify({ state, visits: kataGoVisits(), maxSeconds: kataGoSeconds() }),
-    signal: AbortSignal.timeout(90_000),
+    body: JSON.stringify({ state, visits: kataGoVisits(), maxSeconds }),
+    signal: AbortSignal.timeout((maxSeconds + 8) * 1_000),
   });
   const data = await response.json() as { action?: MatchAction; error?: string };
   if (!response.ok || !data.action) throw new MatchRuleError("katago_unavailable", data.error ?? "KataGo GPU 引擎暂时不可用");

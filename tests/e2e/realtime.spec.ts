@@ -43,6 +43,14 @@ test("authenticated platform and room sockets deliver live events", async ({ pag
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __roomEvents?: string[] }).__roomEvents ?? []))
     .toContainEqual(expect.stringContaining('"type":"connected"'));
 
+  const matchMessage = await page.request.post("/api/chat", { data: { type: "send", channel: "match", roomId, body: `对局实时测试 ${suffix}` } });
+  expect(matchMessage.status()).toBe(200);
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { __roomEvents?: string[] }).__roomEvents ?? []))
+    .toContainEqual(expect.stringContaining('"type":"chat_updated"'));
+  const matchMessages = await page.request.get(`/api/chat?channel=match&roomId=${encodeURIComponent(roomId)}`);
+  expect(matchMessages.status()).toBe(200);
+  expect(await matchMessages.json()).toMatchObject({ messages: [expect.objectContaining({ channel: "match", body: `对局实时测试 ${suffix}`, matchRole: "black" })] });
+
   await page.request.post("/api/match", { data: { type: "leave", roomId } });
   await page.evaluate(() => {
     const state = window as typeof window & { __platformSocket?: WebSocket; __roomSocket?: WebSocket };

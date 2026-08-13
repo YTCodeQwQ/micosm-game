@@ -25,6 +25,7 @@ export async function ensureChatSchema(d1: FriendD1) {
   await d1.prepare("CREATE INDEX IF NOT EXISTS chat_messages_world_idx ON chat_messages(channel, created_at)").run();
   await d1.prepare("CREATE INDEX IF NOT EXISTS chat_messages_hall_idx ON chat_messages(channel, hall, created_at)").run();
   await d1.prepare("CREATE INDEX IF NOT EXISTS chat_messages_direct_idx ON chat_messages(sender_id, recipient_id, created_at)").run();
+  await d1.prepare("CREATE INDEX IF NOT EXISTS chat_messages_match_idx ON chat_messages(channel, room_id, created_at)").run();
 
   await d1.prepare(`CREATE TABLE IF NOT EXISTS chat_reads (
     user_id TEXT NOT NULL,
