@@ -49,6 +49,8 @@ not connected to a production provider yet.
 - `docs/AI_GOMOKU_PLAN.md`: Gomoku AI diagnosis and benchmark plan
 - `docs/ADMIN_CONSOLE_DESIGN.md`: administrator roles and workspace boundaries
 - `docs/PRODUCTION_OPERATIONS_DESIGN.md`: planned production operations console
+- `docs/PRODUCT_ROADMAP.md`: product direction and phased roadmap toward the 2.5D co-created social world
+- `CHANGELOG.md`: user-facing changes that must be updated with future feature commits
 
 ## Useful Commands
 
