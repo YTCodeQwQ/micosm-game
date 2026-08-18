@@ -3244,7 +3244,17 @@ body[data-theme="dark"] {
   .rank-board-list { grid-template-columns: repeat(2,minmax(0,1fr)); max-height: 420px; }
 }
 
-.room-leave-button b { font-style: normal; }
+.room-chip > .room-leave-button {
+  width: auto;
+  min-width: 78px;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid rgba(176, 78, 73, .14);
+  background: #fff1ef;
+  color: #a44e49;
+}
+.room-chip > .room-leave-button:hover { background: #ffe5e1; }
+.room-leave-button b { font-size: 11px; font-style: normal; font-weight: 780; }
 .match-move-list { display: none; }
 @media (min-width: 861px) { .match-move-list { display: block; } }
 

@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import {
   Activity, AlertTriangle, ArrowLeft, ArrowRight, Eye, Gamepad2, History,
   LoaderCircle, RotateCcw, Search, ShieldCheck, Trophy, Users,
 } from "lucide-react";
-import { activateMatch, applyMatchAction, createMatchState, type MatchState } from "../../lib/match-engine";
+import type { MatchState } from "../../lib/match-engine";
+import { buildReplayFrames } from "../../lib/match-replay";
 import { AdminRankSeasons } from "./AdminRankSeasons";
+import boardStyles from "./admin-board.module.css";
 import styles from "./admin.module.css";
 
 type MatchSummary = {
@@ -33,23 +36,6 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 function formatTime(value?: number | null) {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未记录";
-}
-
-function replayFrames(source?: MatchState) {
-  if (!source) return [] as MatchState[];
-  let state = activateMatch(createMatchState(source.game, source.size, "black", Boolean(source.gomokuForbidden)));
-  const frames = [state];
-  for (const move of source.moves ?? []) {
-    try {
-      if (move.type === "play") state = applyMatchAction(state, move.player, { type: "play", row: move.row, col: move.col });
-      else if (move.type === "pass") state = applyMatchAction(state, move.player, { type: "pass" });
-      else if (move.type === "resumeGo") state = applyMatchAction(state, move.player, { type: "resumeGo" });
-      frames.push(state);
-    } catch {
-      break;
-    }
-  }
-  return frames;
 }
 
 export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, onNotice, revision = 0 }: { canManageSeasons: boolean; canWriteRank: boolean; onError: (message: string) => void; onNotice: (message: string) => void; revision?: number }) {
@@ -134,7 +120,7 @@ export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, o
     finally { setBusy(""); }
   }
 
-  const frames = useMemo(() => replayFrames(detail?.match.state), [detail]);
+  const frames = useMemo(() => buildReplayFrames(detail?.match.state), [detail]);
   const shownFrame = frames[Math.min(frameIndex, Math.max(0, frames.length - 1))] ?? detail?.match.state;
 
   return <section className={`${styles.pageSection} ${styles.gameOps}`}>
@@ -156,5 +142,12 @@ export function AdminGameOperations({ canManageSeasons, canWriteRank, onError, o
 function ReplayBoard({ state }: { state?: MatchState }) {
   if (!state?.board?.length) return <div className={styles.replayBoardEmpty}>棋盘数据不可用</div>;
   const size = state.board.length;
-  return <div className={`${styles.adminReplayBoard} ${state.game === "reversi" ? styles.reversiReplay : ""}`} style={{ gridTemplateColumns: `repeat(${size},1fr)`, gridTemplateRows: `repeat(${size},1fr)` }}>{state.board.flatMap((row, rowIndex) => row.map((stone, colIndex) => <span className={stone ? styles[`stone_${stone}`] : ""} key={`${rowIndex}-${colIndex}`}>{stone && <i />}</span>))}</div>;
+  if (state.game === "reversi") {
+    return <div className={`${boardStyles.board} ${boardStyles.reversiBoard}`}><div className={boardStyles.reversiGrid} style={{ gridTemplateColumns: `repeat(${size},1fr)`, gridTemplateRows: `repeat(${size},1fr)` }}>{state.board.flatMap((row, rowIndex) => row.map((stone, colIndex) => <span className={`${boardStyles.reversiCell} ${stone ? boardStyles[stone] : ""}`} key={`${rowIndex}-${colIndex}`}>{stone && <i />}</span>))}</div></div>;
+  }
+
+  const spacing = 100 / Math.max(1, size - 1);
+  const stoneSize = 82 / Math.max(1, size - 1);
+  const gridStyle = { backgroundSize: `${spacing}% ${spacing}%` } satisfies CSSProperties;
+  return <div className={boardStyles.board}><div className={boardStyles.grid} style={gridStyle}>{state.board.flatMap((row, rowIndex) => row.map((stone, colIndex) => stone ? <span className={`${boardStyles.stone} ${boardStyles[stone]}`} key={`${rowIndex}-${colIndex}`} style={{ left: `${colIndex * spacing}%`, top: `${rowIndex * spacing}%`, width: `${stoneSize}%` }}><i /></span> : null))}</div></div>;
 }

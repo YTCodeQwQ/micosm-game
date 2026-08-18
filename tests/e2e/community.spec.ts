@@ -180,6 +180,7 @@ test("community stays usable on the narrowest supported screen", async ({ page }
   await mockSignedInApi(page);
   await mockCommunity(page);
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "欢迎回来，星野测试员" })).toBeVisible();
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /大厅/ }).click();
   await expect(page.getByRole("heading", { name: "星海交流站" })).toBeVisible();
   await expectNoHorizontalOverflow(page);

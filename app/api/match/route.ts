@@ -70,12 +70,12 @@ function rapfiServiceHeaders() {
 
 function kataGoVisits() {
   const configured = Number((env as unknown as { AI_KATAGO_VISITS?: string }).AI_KATAGO_VISITS);
-  return Number.isFinite(configured) ? Math.max(50, Math.min(5000, Math.round(configured))) : 3200;
+  return Number.isFinite(configured) ? Math.max(50, Math.min(5000, Math.round(configured))) : 1600;
 }
 
 function kataGoSeconds() {
   const configured = Number((env as unknown as { AI_KATAGO_SECONDS?: string }).AI_KATAGO_SECONDS);
-  return Number.isFinite(configured) ? Math.max(2, Math.min(30, configured)) : 5;
+  return Number.isFinite(configured) ? Math.max(2, Math.min(30, configured)) : 3;
 }
 
 async function kataGoAction(state: MatchState): Promise<MatchAction> {

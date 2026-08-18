@@ -5,6 +5,7 @@ test("mobile viewport matrix exposes every primary destination", async ({ page }
   test.skip(!testInfo.project.name.startsWith("mobile-"), "mobile matrix");
   await mockSignedInApi(page);
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "欢迎回来，星野测试员" })).toBeVisible();
   const nav = page.locator(".mobile-primary-nav");
   await expect(nav).toBeVisible();
   await expectNoHorizontalOverflow(page);

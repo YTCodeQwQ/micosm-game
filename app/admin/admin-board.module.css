@@ -1,0 +1,75 @@
+.board {
+  width: min(390px, calc(100% - 30px));
+  aspect-ratio: 1;
+  margin: 4px auto 11px;
+  padding: 18px;
+  border: 9px solid #c9954a;
+  border-radius: 7px;
+  background: #deb166;
+  box-shadow: inset 0 0 0 1px #9b6c31;
+}
+
+.grid {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-top: 1px solid #7c582d;
+  border-left: 1px solid #7c582d;
+  background-image:
+    linear-gradient(to right, transparent calc(100% - 1px), #7c582d 0),
+    linear-gradient(to bottom, transparent calc(100% - 1px), #7c582d 0);
+  background-repeat: repeat;
+}
+
+.stone {
+  position: absolute;
+  z-index: 2;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+}
+
+.stone i,
+.reversiCell i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+.black i {
+  background: radial-gradient(circle at 34% 28%, #5d6268 0, #111 45%, #000 100%);
+  box-shadow: 0 2px 3px #4e321c88;
+}
+
+.white i {
+  background: radial-gradient(circle at 34% 28%, #fff 0, #f2f1ea 55%, #c7c2b6 100%);
+  box-shadow: 0 2px 4px #4e321c66;
+}
+
+.reversiBoard {
+  padding: 8px;
+  border-color: #2d6554;
+  background: #4f9a77;
+}
+
+.reversiGrid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+}
+
+.reversiCell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid rgb(19 65 49 / 55%);
+}
+
+.reversiCell i {
+  inset: 10%;
+}
+
+@media (max-width: 640px) {
+  .board {
+    width: calc(100% - 20px);
+  }
+}

@@ -36,6 +36,7 @@ test("mobile game-record center uses a dedicated uncluttered layout", async ({ p
   test.skip(testInfo.project.name !== "mobile-chromium", "mobile game-record layout");
   await mockSignedInApi(page);
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "欢迎回来，星野测试员" })).toBeVisible();
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /我的/ }).click();
   await page.getByRole("button", { name: "对局记录" }).click();
   await expect(page.getByRole("heading", { name: "棋谱中心" })).toBeVisible();
@@ -55,6 +56,7 @@ test("saved games replay every move with seeking and accelerated playback", asyn
     await route.fulfill({ json: url.searchParams.has("id") ? { record } : { records: [record] } });
   });
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "欢迎回来，星野测试员" })).toBeVisible();
   await page.locator(".mobile-primary-nav").getByRole("button", { name: /我的/ }).click();
   await page.getByRole("button", { name: "对局记录" }).click();
   await page.locator(".history-row-open").click();

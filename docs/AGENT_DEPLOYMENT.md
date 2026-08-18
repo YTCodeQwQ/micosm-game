@@ -184,8 +184,8 @@ platform's encrypted secret/variable system.
 | --- | --- | --- | --- |
 | `AI_SERVICE_ORIGIN` | for Go master | Reachable KataGo HTTPS origin | `http://127.0.0.1:3210` |
 | `AI_SERVICE_TOKEN` | production | KataGo bearer token | empty |
-| `AI_KATAGO_VISITS` | optional | Search visits, 50-5000 | `3200` |
-| `AI_KATAGO_SECONDS` | optional | Maximum seconds per Go move | `12` |
+| `AI_KATAGO_VISITS` | optional | Search visits, 50-5000 | `1600` |
+| `AI_KATAGO_SECONDS` | optional | Maximum seconds per Go move | `3` |
 | `RAPFI_SERVICE_ORIGIN` | for Gomoku master | Reachable Rapfi HTTPS origin | `http://127.0.0.1:3211` |
 | `RAPFI_SERVICE_TOKEN` | production | Rapfi bearer token | falls back to `AI_SERVICE_TOKEN` |
 | `AI_RAPFI_SECONDS` | optional | Maximum seconds per Gomoku move, 0.5-30 | `2.5` |

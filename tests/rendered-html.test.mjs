@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("defines the Micosm Game experience", async () => {
-  const [page, layout] = await Promise.all([
+  const [page, layout, bootScreen] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/AppBootScreen.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(layout, /Micosm Game \| Board & Logic/);
@@ -16,6 +17,8 @@ test("defines the Micosm Game experience", async () => {
   assert.doesNotMatch(page, /数独/);
   assert.doesNotMatch(page, /题库/);
   assert.match(page, /排位/);
+  assert.match(page, /!ready \|\| !authReady/);
+  assert.match(bootScreen, /正在进入你的小世界/);
   assert.doesNotMatch(page, /codex-preview|Your site is taking shape/);
 });
 
@@ -80,14 +83,17 @@ test("offers mobile fullscreen and installable home-screen support", async () =>
 });
 
 test("keeps the current workspace and provides realtime match chat controls", async () => {
-  const [page, chatRoute, styles] = await Promise.all([
+  const [page, workspaceState, chatRoute, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/workspace-state.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/chat/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /micosm-main-view/);
-  assert.match(page, /savedView === "community" \|\| savedView === "ranked" \|\| savedView === "history"/);
+  assert.match(page, /micosm-workspace/);
+  assert.match(page, /serializeWorkspaceState/);
+  assert.match(workspaceState, /"world".*"friends".*"account"/s);
   assert.match(page, /MatchChatVisibility = "hidden" \| "opponent" \| "all"/);
   assert.match(page, /不接收/);
   assert.match(page, /仅对手/);
@@ -426,6 +432,8 @@ test("offers portable human-versus-AI play with real KataGo and Rapfi tiers", as
   assert.match(route, /AI_SERVICE_ORIGIN/);
   assert.match(route, /AI_KATAGO_VISITS/);
   assert.match(route, /AI_KATAGO_SECONDS/);
+  assert.match(route, /Math\.round\(configured\)\)\) : 1600/);
+  assert.match(route, /Math\.min\(30, configured\)\) : 3/);
   assert.match(route, /RAPFI_SERVICE_ORIGIN/);
   assert.match(route, /AI_RAPFI_SECONDS/);
   assert.match(aiRoute, /AI_SERVICE_TOKEN/);

@@ -74,6 +74,8 @@ import { CommunityCenter } from "../components/CommunityCenter";
 import { PolicyCenter } from "../components/PolicyCenter";
 import { usePlatformRealtime } from "../hooks/usePlatformRealtime";
 import { useMobileApp } from "../hooks/useMobileApp";
+import { parseWorkspaceState, serializeWorkspaceState, type MainWorkspaceView } from "../lib/workspace-state";
+import { AppBootScreen } from "../components/AppBootScreen";
 
 const STORY_MODE_ENABLED = false;
 
@@ -584,7 +586,7 @@ function reviewMoveCoordinate(game: MatchGame, size: number, row: number, col: n
 }
 
 export default function HomePage() {
-  const [mainView, setMainView] = useState<"games" | "community" | "ranked" | "story" | "history">("games");
+  const [mainView, setMainView] = useState<MainWorkspaceView | "story">("games");
   const [communityEntry, setCommunityEntry] = useState<"discussion" | "announcements">("discussion");
   const [communityReturnPostId, setCommunityReturnPostId] = useState<string | null>(null);
   const [communityLiveOpen, setCommunityLiveOpen] = useState(false);
@@ -752,8 +754,18 @@ export default function HomePage() {
           });
           if (typeof settings.boardScale === "number") setBoardScale(Math.min(130, Math.max(70, settings.boardScale)));
         }
-        const savedView = window.sessionStorage.getItem("micosm-main-view");
-        if (savedView === "community" || savedView === "ranked" || savedView === "history") setMainView(savedView);
+        const workspace = parseWorkspaceState(
+          window.sessionStorage.getItem("micosm-workspace"),
+          window.sessionStorage.getItem("micosm-main-view"),
+        );
+        setMainView(workspace.view);
+        setCommunityEntry(workspace.communityEntry);
+        setCommunityLiveOpen(workspace.communityLive);
+        setLobbyHall(workspace.lobbyHall);
+        setChatOpen(workspace.panel === "world");
+        setChatChannel("world");
+        setFriendPanelOpen(workspace.panel === "friends");
+        setAccountOpen(workspace.panel === "account");
         const savedMatchChatVisibility = window.localStorage.getItem("micosm-match-chat-visibility");
         if (["hidden", "opponent", "all"].includes(savedMatchChatVisibility ?? "")) setMatchChatVisibility(savedMatchChatVisibility as MatchChatVisibility);
       } catch {
@@ -1012,8 +1024,23 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!ready || room) return;
-    window.sessionStorage.setItem("micosm-main-view", mainView === "story" ? "games" : mainView);
-  }, [mainView, ready, room]);
+    const view = mainView === "story" ? "games" : mainView;
+    const panel = accountOpen
+      ? "account"
+      : friendPanelOpen
+        ? "friends"
+        : chatOpen && chatChannel === "world"
+          ? "world"
+          : null;
+    window.sessionStorage.setItem("micosm-main-view", view);
+    window.sessionStorage.setItem("micosm-workspace", serializeWorkspaceState({
+      view,
+      panel,
+      communityLive: view === "community" && communityLiveOpen,
+      communityEntry,
+      lobbyHall,
+    }));
+  }, [accountOpen, chatChannel, chatOpen, communityEntry, communityLiveOpen, friendPanelOpen, lobbyHall, mainView, ready, room]);
 
   useEffect(() => {
     let disposed = false;
@@ -2627,6 +2654,8 @@ export default function HomePage() {
     setPendingMove([nextRow, nextCol]);
   }
 
+  if (!ready || !authReady) return <AppBootScreen />;
+
   return (
     <main className={`micosm-app ${preferences.motionEnabled ? "" : "motion-muted"} ${!room && mainView === "games" ? "lobby-home-active" : ""} ${mainView === "ranked" ? "ranked-view-active" : ""} ${mainView === "community" ? "community-view-active" : ""} ${mainView === "community" && communityLiveOpen ? "community-live-page-active" : ""} ${room && mainView === "games" ? "match-session-active" : ""} ${review ? "review-session-active" : ""} ${!room && (chatOpen || friendPanelOpen || accountOpen) ? "mobile-page-open" : ""} ${!room && chatOpen && chatChannel === "world" ? "mobile-world-page-open" : ""} ${!room && friendPanelOpen ? "mobile-friends-page-open" : ""} ${!room && accountOpen ? "mobile-account-page-open" : ""}`}>
       <header className="glass topbar">
@@ -2815,7 +2844,7 @@ export default function HomePage() {
                   ) : (
                     <span className="room-chip-label">{room.mode === "ranked" ? <Trophy size={14} /> : room.mode === "ai" ? <Bot size={14} /> : <Search size={14} />}{room.mode === "ranked" ? "排位对局" : room.mode === "ai" ? `人机 · ${aiDifficultyOptions.find((option) => option.id === room.state.ai?.difficulty)?.name ?? "电脑"}` : "匹配对局"}<i>{room.rolePending ? "?" : room.role === "black" ? "黑" : room.role === "white" ? "白" : "观"}</i></span>
                   )}
-                  <button aria-label={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} className="room-leave-button" onClick={() => { if (room.mode !== "private" && !room.opponentReady) void cancelMatchmaking(); else setConfirmIntent("leave"); }} title={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出房间"} type="button"><X size={15} /><b>{room.mode !== "private" && !room.opponentReady ? "取消" : "退出"}</b></button>
+                  <button aria-label={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出对局"} className="room-leave-button" onClick={() => { if (room.mode !== "private" && !room.opponentReady) void cancelMatchmaking(); else setConfirmIntent("leave"); }} title={room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出对局"} type="button"><LogOut size={15} /><b>{room.mode !== "private" && !room.opponentReady ? "取消匹配" : "退出对局"}</b></button>
                 </div>
               )}
               <label className="zoom-control">
@@ -3144,7 +3173,7 @@ export default function HomePage() {
         </>
       ) : mainView === "community" && authUser ? (
         <CommunityCenter
-          initialSection={communityEntry}
+          initialSection={communityLiveOpen ? "live" : communityEntry}
           initialPostId={communityReturnPostId}
           key={`${communityEntry}:${communityReturnPostId ?? "feed"}`}
           liveLobby={<CommunityLiveLobby

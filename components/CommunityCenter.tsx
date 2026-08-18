@@ -103,7 +103,7 @@ function GameAttachment({ attachment, onOpen }: { attachment: Attachment; onOpen
 
 export function CommunityCenter({ initialPostId, initialSection, liveLobby, onCloseLiveLobby, onOpenGame, onOpenLiveLobby, onToast, revision, user }: {
   initialPostId: string | null;
-  initialSection: "discussion" | "announcements";
+  initialSection: "live" | "discussion" | "announcements";
   liveLobby: ReactNode;
   onCloseLiveLobby: () => void;
   onOpenGame: (file: MicosmGameFile, postId: string) => void;

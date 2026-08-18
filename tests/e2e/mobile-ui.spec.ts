@@ -21,7 +21,7 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
   test.skip(testInfo.project.name !== "mobile-chromium", "mobile snapshot");
   await mockSignedInApi(page);
   await page.goto("/");
-  await expect(page.locator("#mobile-play-title")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "欢迎回来，星野测试员" })).toBeVisible();
   await expect(page.locator(".auth-backdrop")).toBeHidden();
   await expectNoHorizontalOverflow(page);
   await expect(page).toHaveScreenshot("home.png", { fullPage: true });
@@ -42,6 +42,33 @@ test("mobile primary pages stay compact and usable", async ({ page }, testInfo) 
   await expect(page.getByRole("button", { name: "添加到手机桌面" })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await expect(page).toHaveScreenshot("account.png", { fullPage: true });
+});
+
+test("mobile workspace survives a browser refresh", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium", "mobile workspace behavior");
+  await mockSignedInApi(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "欢迎回来，星野测试员" })).toBeVisible();
+  await expect(page.locator(".auth-backdrop")).toBeHidden();
+
+  await page.locator(".mobile-primary-nav").getByRole("button", { name: /好友/ }).click();
+  await expect(page.locator(".friend-panel > header").getByRole("heading", { name: "好友" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("micosm-workspace"))).toContain('"panel":"friends"');
+  await page.reload();
+  await expect(page.locator(".friend-panel > header").getByRole("heading", { name: "好友" })).toBeVisible();
+
+  await page.locator(".mobile-primary-nav").getByRole("button", { name: /我的/ }).click();
+  await expect(page.getByRole("button", { name: "进入浏览器全屏" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("micosm-workspace"))).toContain('"panel":"account"');
+  await page.reload();
+  await expect(page.getByRole("button", { name: "进入浏览器全屏" })).toBeVisible();
+
+  await page.locator(".mobile-primary-nav").getByRole("button", { name: /大厅/ }).click();
+  await page.getByRole("button", { name: /实时大厅/ }).click();
+  await expect(page.getByRole("heading", { name: "世界主大厅" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("micosm-workspace"))).toContain('"communityLive":true');
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "世界主大厅" })).toBeVisible();
 });
 
 test("desktop lobby keeps the artwork and controls in balance", async ({ page }, testInfo) => {

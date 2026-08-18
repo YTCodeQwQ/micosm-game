@@ -44,8 +44,8 @@ created beside the executable and should be persisted across restarts. Rapfi's
 | --- | --- | --- |
 | `AI_SERVICE_ORIGIN` | KataGo node origin | `http://127.0.0.1:3210` |
 | `AI_SERVICE_TOKEN` | Same token used by the AI node | empty for local development |
-| `AI_KATAGO_VISITS` | Master-level search budget, 50-5000 | `3200` |
-| `AI_KATAGO_SECONDS` | Maximum thinking time for one master-level move | `12` |
+| `AI_KATAGO_VISITS` | Master-level search budget, 50-5000 | `1600` |
+| `AI_KATAGO_SECONDS` | Maximum thinking time for one master-level move | `3` |
 | `RAPFI_SERVICE_ORIGIN` | Rapfi node origin | `http://127.0.0.1:3211` |
 | `RAPFI_SERVICE_TOKEN` | Same token used by the Rapfi node | falls back to `AI_SERVICE_TOKEN` |
 | `AI_RAPFI_SECONDS` | Maximum thinking time for one Rapfi move, 0.5-30 | `2.5` |
